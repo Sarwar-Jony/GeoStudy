@@ -1,0 +1,60 @@
+{
+  "name": "geostudy",
+  "version": "2.5.0",
+  "description": "Autonomous Geospatial Study Area Intelligence & Remote Sensing Analytics Platform",
+  "author": "Sarwar Jony (Department of Urban and Regional Planning, KUET)",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Sarwar-Jony/GeoStudy.git"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@electric-sql/pglite": "^0.5.8",
+    "@google/earthengine": "^1.7.43",
+    "@tanstack/react-query": "^5.102.8",
+    "@tmcw/togeojson": "^7.1.2",
+    "@turf/turf": "^7.4.0",
+    "@types/bcryptjs": "^2.4.6",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/leaflet": "^1.9.22",
+    "@types/shpjs": "^3.4.7",
+    "bcryptjs": "^3.0.3",
+    "clsx": "^2.1.1",
+    "dotenv": "17.3.1",
+    "drizzle-orm": "0.45.2",
+    "geotiff": "^3.0.5",
+    "google-auth-library": "^11.0.2",
+    "jsonwebtoken": "^9.0.3",
+    "jszip": "^3.10.2",
+    "leaflet": "^1.9.4",
+    "lucide-react": "^1.45.0",
+    "next": "16.2.6",
+    "pg": "8.20.0",
+    "react": "19.2.6",
+    "react-dom": "19.2.6",
+    "react-leaflet": "^5.0.0",
+    "shpjs": "^6.2.0",
+    "world-countries": "^5.1.0",
+    "zustand": "^5.0.15"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "4.1.17",
+    "@types/node": "22.19.15",
+    "@types/pg": "8.18.0",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "drizzle-kit": "0.31.10",
+    "eslint": "9.39.4",
+    "eslint-config-next": "16.2.6",
+    "postcss": "8.5.8",
+    "tailwindcss": "4.1.17",
+    "typescript": "5.9.3"
+  }
+}
