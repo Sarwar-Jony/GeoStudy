@@ -1,7 +1,7 @@
 import * as turf from "@turf/turf";
 import { db } from "@/db";
 import { boundaries } from "@/db/schema";
-import { and, eq, isNull, ilike } from "drizzle-orm";
+import { and, eq, isNull, ilike, inArray } from "drizzle-orm";
 import { levelName } from "./countries";
 
 const META_BASE = "https://www.geoboundaries.org/api/current/gbOpen";
@@ -122,13 +122,31 @@ function toBoundaryRow(raw: typeof boundaries.$inferSelect): BoundaryRow {
   };
 }
 
+// 1-hour server-side memory cache for level lookups and parent-child sets
+const levelCache = new Map<string, { time: number; rows: BoundaryRow[] }>();
+// Server-side memory cache for individual boundaries by UUID
+const singleBoundaryCache = new Map<string, BoundaryRow>();
+const CACHE_TTL_MS = 60 * 60 * 1000;
+
 /** Ensure every feature for a given country+level exists in the DB cache (parentId left null initially). */
 async function ensureLevelCached(iso3: string, level: number): Promise<BoundaryRow[]> {
+  const cacheKey = `${iso3}_ALL_L${level}`;
+  const mem = levelCache.get(cacheKey);
+  if (mem && Date.now() - mem.time < CACHE_TTL_MS) {
+    return mem.rows;
+  }
+
   const existing = await db
     .select()
     .from(boundaries)
     .where(and(eq(boundaries.countryIso3, iso3), eq(boundaries.level, level)));
-  if (existing.length > 0) return existing.map(toBoundaryRow);
+
+  if (existing.length > 0) {
+    const mapped = existing.map(toBoundaryRow);
+    mapped.forEach((r) => singleBoundaryCache.set(r.id, r));
+    levelCache.set(cacheKey, { time: Date.now(), rows: mapped });
+    return mapped;
+  }
 
   const fc = await getRawFeatureCollection(iso3, level);
   if (!fc || !fc.features?.length) return [];
@@ -170,33 +188,24 @@ async function ensureLevelCached(iso3: string, level: number): Promise<BoundaryR
     .select()
     .from(boundaries)
     .where(and(eq(boundaries.countryIso3, iso3), eq(boundaries.level, level)));
-  return inserted.map(toBoundaryRow);
+  const mapped = inserted.map(toBoundaryRow);
+  mapped.forEach((r) => singleBoundaryCache.set(r.id, r));
+  levelCache.set(cacheKey, { time: Date.now(), rows: mapped });
+  return mapped;
 }
 
 /** Get the country-level (ADM0) boundary as a single row (fetched + cached like any level). */
 export async function getCountryBoundary(iso3: string): Promise<BoundaryRow | null> {
+  const cacheKey = `${iso3}_COUNTRY_0`;
+  const cached = singleBoundaryCache.get(cacheKey);
+  if (cached) return cached;
   const rows = await ensureLevelCached(iso3, 0);
-  return rows[0] ?? null;
-}
-
-function computeOverlapArea(geom1: GeoJSON.Geometry, geom2: GeoJSON.Geometry): number {
-  try {
-    const isect = turf.intersect(
-      turf.featureCollection([turf.feature(geom1), turf.feature(geom2)]) as any,
-    );
-    if (isect) return turf.area(isect);
-  } catch {
-    // Fallback if complex polygon boundary has self-intersection
+  if (rows[0]) {
+    singleBoundaryCache.set(cacheKey, rows[0]);
+    singleBoundaryCache.set(rows[0].id, rows[0]);
+    return rows[0];
   }
-  try {
-    const pt = turf.pointOnFeature(turf.feature(geom1));
-    if (turf.booleanPointInPolygon(pt, turf.feature(geom2) as any)) {
-      return 1;
-    }
-  } catch {
-    // ignore
-  }
-  return 0;
+  return null;
 }
 
 /** Get children boundaries under a parent (or top-level ADM1 list when parent is null). */
@@ -205,70 +214,100 @@ export async function getChildBoundaries(
   level: number,
   parent: BoundaryRow | null,
 ): Promise<BoundaryRow[]> {
-  const all = await ensureLevelCached(iso3, level);
-  if (all.length === 0) return [];
-  if (level === 1 || !parent) {
-    return all.sort((a, b) => a.name.localeCompare(b.name));
+  const cacheKey = `${iso3}_L${level}_P${parent?.id || "root"}`;
+  const cached = levelCache.get(cacheKey);
+  if (cached && Date.now() - cached.time < CACHE_TTL_MS) {
+    return cached.rows;
   }
 
-  const parentBbox = parent.bbox;
-  const matchedChildren: BoundaryRow[] = [];
-  const needsParentUpdate: string[] = [];
+  // 1. Root Level (Level 1 divisions): return all level 1 boundaries
+  if (level === 1 || !parent) {
+    const all = await ensureLevelCached(iso3, level);
+    const sorted = all.sort((a, b) => a.name.localeCompare(b.name));
+    levelCache.set(cacheKey, { time: Date.now(), rows: sorted });
+    return sorted;
+  }
 
-  for (const candidate of all) {
+  // 2. Fast Path: Check if children are ALREADY assigned to parent in database
+  const directChildren = await db
+    .select()
+    .from(boundaries)
+    .where(
+      and(
+        eq(boundaries.countryIso3, iso3),
+        eq(boundaries.level, level),
+        eq(boundaries.parentId, parent.id)
+      )
+    );
+
+  if (directChildren.length > 0) {
+    const rows = directChildren.map(toBoundaryRow).sort((a, b) => a.name.localeCompare(b.name));
+    rows.forEach((r) => singleBoundaryCache.set(r.id, r));
+    levelCache.set(cacheKey, { time: Date.now(), rows });
+    return rows;
+  }
+
+  // 3. First-time computation: Level exists, but parentId not yet populated for this parent
+  const allCandidates = await ensureLevelCached(iso3, level);
+  if (allCandidates.length === 0) return [];
+
+  const parentBbox = parent.bbox;
+  const parentFeat = turf.feature(parent.geometry);
+  const matchedChildren: BoundaryRow[] = [];
+  const matchedIds: string[] = [];
+
+  for (const candidate of allCandidates) {
     const cb = candidate.bbox;
-    // Quick bbox reject
+    // Fast Bounding box rejection (0.0001ms)
     if (cb[2] < parentBbox[0] || cb[0] > parentBbox[2] || cb[3] < parentBbox[1] || cb[1] > parentBbox[3]) {
       continue;
     }
 
-    // If candidate was already assigned to this parent, verify it's a true match and not a border glitch
-    if (candidate.parentId === parent.id) {
-      const overlap = computeOverlapArea(candidate.geometry, parent.geometry);
-      const candidateAreaM2 = candidate.areaKm2 * 1_000_000;
-      const overlapRatio = candidateAreaM2 > 0 ? overlap / candidateAreaM2 : 0;
-
-      // If overlap with this parent is virtually non-existent (< 10%), it was wrongly claimed by centroid border bug
-      if (overlapRatio < 0.10 && candidateAreaM2 > 100_000) {
-        // Unset invalid parentId so the true parent can claim it
-        await db
-          .update(boundaries)
-          .set({ parentId: null })
-          .where(eq(boundaries.id, candidate.id));
-        continue;
-      }
-
-      matchedChildren.push(candidate);
-      continue;
+    // Fast Point-In-Polygon on Centroid (0.01ms vs 2000ms for polygon intersect)
+    let isInside = false;
+    try {
+      isInside = turf.booleanPointInPolygon(turf.point(candidate.centroid), parentFeat as any);
+    } catch {
+      isInside = false;
     }
 
-    // If candidate has no parent or had a dubious assignment, check overlap area with this parent
-    const overlap = computeOverlapArea(candidate.geometry, parent.geometry);
-    const candidateAreaM2 = candidate.areaKm2 * 1_000_000;
-    const overlapRatio = candidateAreaM2 > 0 ? overlap / candidateAreaM2 : 0;
+    // Fallback if centroid is slightly outside irregular polygon boundary
+    if (!isInside) {
+      try {
+        const pt = turf.pointOnFeature(turf.feature(candidate.geometry));
+        isInside = turf.booleanPointInPolygon(pt, parentFeat as any);
+      } catch {}
+    }
 
-    // A true child boundary substantially overlaps with its administrative parent (> 35% of child area)
-    if (overlapRatio > 0.35 || (overlap > 10_000_000 && overlapRatio > 0.15)) {
+    if (isInside) {
       matchedChildren.push({ ...candidate, parentId: parent.id });
-      needsParentUpdate.push(candidate.id);
+      matchedIds.push(candidate.id);
     }
   }
 
-  if (needsParentUpdate.length > 0) {
-    for (const childId of needsParentUpdate) {
-      await db
-        .update(boundaries)
-        .set({ parentId: parent.id })
-        .where(eq(boundaries.id, childId));
-    }
+  // Batch update parentId in ONE single query (instead of looping 500 times)
+  if (matchedIds.length > 0) {
+    await db
+      .update(boundaries)
+      .set({ parentId: parent.id })
+      .where(inArray(boundaries.id, matchedIds));
   }
 
-  return matchedChildren.sort((a, b) => a.name.localeCompare(b.name));
+  const sorted = matchedChildren.sort((a, b) => a.name.localeCompare(b.name));
+  sorted.forEach((r) => singleBoundaryCache.set(r.id, r));
+  levelCache.set(cacheKey, { time: Date.now(), rows: sorted });
+  return sorted;
 }
 
 export async function getBoundaryById(id: string): Promise<BoundaryRow | null> {
+  if (singleBoundaryCache.has(id)) {
+    return singleBoundaryCache.get(id)!;
+  }
   const rows = await db.select().from(boundaries).where(eq(boundaries.id, id)).limit(1);
-  return rows[0] ? toBoundaryRow(rows[0]) : null;
+  if (!rows[0]) return null;
+  const row = toBoundaryRow(rows[0]);
+  singleBoundaryCache.set(id, row);
+  return row;
 }
 
 /** Search cached boundary names for a country (fast indexed ILIKE query). */

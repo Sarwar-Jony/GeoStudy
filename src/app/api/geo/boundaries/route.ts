@@ -12,10 +12,14 @@ export async function GET(req: NextRequest) {
   const parentId = searchParams.get("parentId");
 
   try {
+    const CACHE_HEADERS = {
+      "Cache-Control": "public, max-age=86400, stale-while-revalidate=604800",
+    };
+
     if (!levelParam || levelParam === "0") {
       const country0 = await getCountryBoundary(country);
       const maxLevel = await getMaxAdmLevel(country);
-      return Response.json({ boundary: country0, maxLevel });
+      return Response.json({ boundary: country0, maxLevel }, { headers: CACHE_HEADERS });
     }
 
     const level = Number(levelParam);
@@ -34,7 +38,7 @@ export async function GET(req: NextRequest) {
       levelName: levelName(country, level),
       items: children,
       maxLevel,
-    });
+    }, { headers: CACHE_HEADERS });
   } catch (err: any) {
     console.error("Boundaries API error:", err);
     return Response.json({

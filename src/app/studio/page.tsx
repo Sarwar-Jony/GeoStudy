@@ -48,7 +48,8 @@ function useBoundaryLevel(country: string, level: number, parentId: string | nul
       return res.json();
     },
     enabled,
-    staleTime: 5 * 60_000,
+    staleTime: Infinity,
+    gcTime: 24 * 60 * 60_000,
   });
 }
 
