@@ -35,7 +35,7 @@ export function getGeeCredentials(): { client_email: string; private_key: string
   }
 
   // 3. Local file credentials
-  const defaultKeyPath = process.env.GEE_KEY_FILE || path.join(process.cwd(), "gee-credentials.json");
+  const defaultKeyPath = process.env.GEE_KEY_FILE || path.join(/*turbopackIgnore: true*/ process.cwd(), "gee-credentials.json");
   if (fs.existsSync(defaultKeyPath)) {
     try {
       const content = fs.readFileSync(defaultKeyPath, "utf8");
