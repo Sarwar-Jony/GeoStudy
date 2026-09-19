@@ -4,7 +4,8 @@ import { boundaries } from "@/db/schema";
 import { and, eq, isNull, ilike, inArray } from "drizzle-orm";
 import { levelName } from "./countries";
 
-const META_BASE = "https://www.geoboundaries.org/api/current/gbOpen";
+const GADM_BASE = "https://geodata.ucdavis.edu/gadm/gadm4.1/json";
+const GEOBOUNDARIES_BASE = "https://www.geoboundaries.org/api/current/gbOpen";
 
 type GbMeta = {
   boundaryName: string;
@@ -28,7 +29,7 @@ const metaCache = new Map<string, GbMeta | null>();
 const geojsonCache = new Map<string, GbFeatureCollection>();
 const maxLevelCache = new Map<string, number>();
 
-async function fetchJson<T>(url: string, timeoutMs = 20000): Promise<T | null> {
+async function fetchJson<T>(url: string, timeoutMs = 35000): Promise<T | null> {
   try {
     const controller = new AbortController();
     const t = setTimeout(() => controller.abort(), timeoutMs);
@@ -47,28 +48,61 @@ async function fetchJson<T>(url: string, timeoutMs = 20000): Promise<T | null> {
 async function getMeta(iso3: string, level: number): Promise<GbMeta | null> {
   const key = `${iso3}-ADM${level}`;
   if (metaCache.has(key)) return metaCache.get(key) ?? null;
-  const meta = await fetchJson<GbMeta>(`${META_BASE}/${iso3}/ADM${level}/`);
+  const meta = await fetchJson<GbMeta>(`${GEOBOUNDARIES_BASE}/${iso3}/ADM${level}/`);
   metaCache.set(key, meta);
   return meta;
 }
 
-/** Determine the deepest ADM level (0-4) that geoBoundaries publishes for a country. */
+/** Determine the deepest ADM level (0-4) available for a country (checks GADM first, then geoBoundaries). */
 export async function getMaxAdmLevel(iso3: string): Promise<number> {
   if (maxLevelCache.has(iso3)) return maxLevelCache.get(iso3)!;
   let max = 0;
+
+  // 1. Try GADM v4.1 first (has levels 1-4 for most countries)
   for (let lvl = 4; lvl >= 1; lvl--) {
-    const meta = await getMeta(iso3, lvl);
-    if (meta) {
-      max = lvl;
-      break;
+    try {
+      const res = await fetch(`${GADM_BASE}/gadm41_${iso3}_${lvl}.json`, {
+        method: "HEAD",
+        headers: { "User-Agent": "GeoStudy-Area-Analyzer/1.0" },
+      });
+      if (res.ok) {
+        max = lvl;
+        break;
+      }
+    } catch {}
+  }
+
+  // 2. Fallback to geoBoundaries if GADM is unavailable
+  if (max === 0) {
+    for (let lvl = 4; lvl >= 1; lvl--) {
+      const meta = await getMeta(iso3, lvl);
+      if (meta) {
+        max = lvl;
+        break;
+      }
     }
   }
+
   maxLevelCache.set(iso3, max);
   return max;
 }
 
+/** Fetch GADM v4.1 FeatureCollection directly from UC Davis */
+async function getGadmFeatureCollection(iso3: string, level: number): Promise<GbFeatureCollection | null> {
+  const key = `GADM-${iso3}-${level}`;
+  if (geojsonCache.has(key)) return geojsonCache.get(key)!;
+  const url = `${GADM_BASE}/gadm41_${iso3}_${level}.json`;
+  const fc = await fetchJson<GbFeatureCollection>(url, 35000);
+  if (fc && fc.features?.length) {
+    geojsonCache.set(key, fc);
+    return fc;
+  }
+  return null;
+}
+
+/** Fetch geoBoundaries FeatureCollection as fallback */
 async function getRawFeatureCollection(iso3: string, level: number): Promise<GbFeatureCollection | null> {
-  const key = `${iso3}-ADM${level}`;
+  const key = `GB-${iso3}-${level}`;
   if (geojsonCache.has(key)) return geojsonCache.get(key)!;
   const meta = await getMeta(iso3, level);
   if (!meta) return null;
@@ -104,6 +138,7 @@ export interface BoundaryRow {
   bbox: [number, number, number, number];
   areaKm2: number;
   centroid: [number, number];
+  source?: string;
 }
 
 function toBoundaryRow(raw: typeof boundaries.$inferSelect): BoundaryRow {
@@ -119,6 +154,7 @@ function toBoundaryRow(raw: typeof boundaries.$inferSelect): BoundaryRow {
     bbox: raw.bbox as [number, number, number, number],
     areaKm2: Number(raw.areaKm2),
     centroid: raw.centroid as [number, number],
+    source: raw.source,
   };
 }
 
@@ -128,7 +164,61 @@ const levelCache = new Map<string, { time: number; rows: BoundaryRow[] }>();
 const singleBoundaryCache = new Map<string, BoundaryRow>();
 const CACHE_TTL_MS = 60 * 60 * 1000;
 
-/** Ensure every feature for a given country+level exists in the DB cache (parentId left null initially). */
+function extractFeatureProps(
+  props: Record<string, unknown>,
+  level: number,
+  iso3: string,
+  fallbackIdx: number
+): {
+  name: string;
+  externalId: string;
+  parentExternalId: string | null;
+  levelName: string;
+  source: string;
+} {
+  const isGadm = Boolean(props[`GID_${level}`] || (level === 0 && (props.GID_0 || props.GID)));
+
+  if (isGadm) {
+    if (level === 0) {
+      return {
+        name: (props.COUNTRY as string) || (props.NAME_0 as string) || "Country",
+        externalId: (props.GID_0 as string) || (props.GID as string) || iso3,
+        parentExternalId: null,
+        levelName: "Country",
+        source: "GADM",
+      };
+    }
+
+    const name =
+      (props[`NAME_${level}`] as string) ||
+      (props[`VARNAME_${level}`] as string) ||
+      (props.shapeName as string) ||
+      `Area ${fallbackIdx + 1}`;
+
+    const externalId = (props[`GID_${level}`] as string) || `${iso3}.${level}.${fallbackIdx}`;
+    const parentExternalId = level > 1 ? (props[`GID_${level - 1}`] as string) || null : null;
+    const type = (props[`TYPE_${level}`] as string) || (props[`ENGTYPE_${level}`] as string);
+    const lvlName = type && type !== "NA" ? type : levelName(iso3, level);
+
+    return {
+      name: name.trim(),
+      externalId,
+      parentExternalId,
+      levelName: lvlName,
+      source: "GADM",
+    };
+  }
+
+  return {
+    name: shapeName(props),
+    externalId: shapeExternalId(props, fallbackIdx),
+    parentExternalId: null,
+    levelName: levelName(iso3, level),
+    source: "geoBoundaries",
+  };
+}
+
+/** Ensure every feature for a given country+level exists in the DB cache (with pre-linked GADM parentId). */
 async function ensureLevelCached(iso3: string, level: number): Promise<BoundaryRow[]> {
   const cacheKey = `${iso3}_ALL_L${level}`;
   const mem = levelCache.get(cacheKey);
@@ -136,20 +226,58 @@ async function ensureLevelCached(iso3: string, level: number): Promise<BoundaryR
     return mem.rows;
   }
 
-  const existing = await db
+  // 1. Check if GADM rows already exist in DB
+  const existingGadm = await db
     .select()
     .from(boundaries)
-    .where(and(eq(boundaries.countryIso3, iso3), eq(boundaries.level, level)));
+    .where(
+      and(
+        eq(boundaries.countryIso3, iso3),
+        eq(boundaries.level, level),
+        eq(boundaries.source, "GADM")
+      )
+    );
 
-  if (existing.length > 0) {
-    const mapped = existing.map(toBoundaryRow);
+  if (existingGadm.length > 0) {
+    const mapped = existingGadm.map(toBoundaryRow);
     mapped.forEach((r) => singleBoundaryCache.set(r.id, r));
     levelCache.set(cacheKey, { time: Date.now(), rows: mapped });
     return mapped;
   }
 
-  const fc = await getRawFeatureCollection(iso3, level);
+  // 2. Fetch GADM v4.1 from UC Davis
+  let fc: GbFeatureCollection | null = await getGadmFeatureCollection(iso3, level);
+  let usedSource = "GADM";
+
+  // 3. Fallback to geoBoundaries if GADM is unavailable
+  if (!fc || !fc.features?.length) {
+    // Check if geoBoundaries exists in DB
+    const existingGb = await db
+      .select()
+      .from(boundaries)
+      .where(and(eq(boundaries.countryIso3, iso3), eq(boundaries.level, level)));
+
+    if (existingGb.length > 0) {
+      const mapped = existingGb.map(toBoundaryRow);
+      mapped.forEach((r) => singleBoundaryCache.set(r.id, r));
+      levelCache.set(cacheKey, { time: Date.now(), rows: mapped });
+      return mapped;
+    }
+
+    fc = await getRawFeatureCollection(iso3, level);
+    usedSource = "geoBoundaries";
+  }
+
   if (!fc || !fc.features?.length) return [];
+
+  // 4. If level > 1 and using GADM, prepare parent rows map for instant O(1) linkage
+  const parentByExternalId = new Map<string, string>();
+  if (level > 1 && usedSource === "GADM") {
+    const parentRows = await ensureLevelCached(iso3, level - 1);
+    for (const p of parentRows) {
+      parentByExternalId.set(p.externalId, p.id);
+    }
+  }
 
   const rows = fc.features.map((f, idx) => {
     const geometry = f.geometry;
@@ -163,17 +291,31 @@ async function ensureLevelCached(iso3: string, level: number): Promise<BoundaryR
     } catch {
       // keep fallback values
     }
+
+    const { name, externalId, parentExternalId, levelName: lvlName, source } = extractFeatureProps(
+      f.properties,
+      level,
+      iso3,
+      idx
+    );
+
+    let parentId: string | null = null;
+    if (parentExternalId && parentByExternalId.has(parentExternalId)) {
+      parentId = parentByExternalId.get(parentExternalId)!;
+    }
+
     return {
       countryIso3: iso3,
       level,
-      levelName: levelName(iso3, level),
-      externalId: shapeExternalId(f.properties, idx),
-      parentId: null as string | null,
-      name: shapeName(f.properties),
+      levelName: lvlName,
+      externalId,
+      parentId,
+      name,
       geometry,
       bbox,
       areaKm2: areaKm2.toFixed(3),
       centroid,
+      source,
     };
   });
 
@@ -187,7 +329,14 @@ async function ensureLevelCached(iso3: string, level: number): Promise<BoundaryR
   const inserted = await db
     .select()
     .from(boundaries)
-    .where(and(eq(boundaries.countryIso3, iso3), eq(boundaries.level, level)));
+    .where(
+      and(
+        eq(boundaries.countryIso3, iso3),
+        eq(boundaries.level, level),
+        eq(boundaries.source, usedSource)
+      )
+    );
+
   const mapped = inserted.map(toBoundaryRow);
   mapped.forEach((r) => singleBoundaryCache.set(r.id, r));
   levelCache.set(cacheKey, { time: Date.now(), rows: mapped });
@@ -247,50 +396,55 @@ export async function getChildBoundaries(
     return rows;
   }
 
-  // 3. First-time computation: Level exists, but parentId not yet populated for this parent
+  // 3. Level candidates: ensure level is cached (GADM links parentId on ingestion)
   const allCandidates = await ensureLevelCached(iso3, level);
   if (allCandidates.length === 0) return [];
 
-  const parentBbox = parent.bbox;
-  const parentFeat = turf.feature(parent.geometry);
-  const matchedChildren: BoundaryRow[] = [];
-  const matchedIds: string[] = [];
+  // Match children by parentId
+  let matchedChildren = allCandidates.filter((c) => c.parentId === parent.id);
 
-  for (const candidate of allCandidates) {
-    const cb = candidate.bbox;
-    // Fast Bounding box rejection (0.0001ms)
-    if (cb[2] < parentBbox[0] || cb[0] > parentBbox[2] || cb[3] < parentBbox[1] || cb[1] > parentBbox[3]) {
-      continue;
-    }
+  // If still empty (e.g. legacy or geoBoundaries fallback without GID), fallback to fast Centroid Point-in-Polygon
+  if (matchedChildren.length === 0) {
+    const parentBbox = parent.bbox;
+    const parentFeat = turf.feature(parent.geometry);
+    const matchedIds: string[] = [];
 
-    // Fast Point-In-Polygon on Centroid (0.01ms vs 2000ms for polygon intersect)
-    let isInside = false;
-    try {
-      isInside = turf.booleanPointInPolygon(turf.point(candidate.centroid), parentFeat as any);
-    } catch {
-      isInside = false;
-    }
+    for (const candidate of allCandidates) {
+      const cb = candidate.bbox;
+      // Fast Bounding box rejection (0.0001ms)
+      if (cb[2] < parentBbox[0] || cb[0] > parentBbox[2] || cb[3] < parentBbox[1] || cb[1] > parentBbox[3]) {
+        continue;
+      }
 
-    // Fallback if centroid is slightly outside irregular polygon boundary
-    if (!isInside) {
+      // Fast Point-In-Polygon on Centroid (0.01ms vs 2000ms for polygon intersect)
+      let isInside = false;
       try {
-        const pt = turf.pointOnFeature(turf.feature(candidate.geometry));
-        isInside = turf.booleanPointInPolygon(pt, parentFeat as any);
-      } catch {}
+        isInside = turf.booleanPointInPolygon(turf.point(candidate.centroid), parentFeat as any);
+      } catch {
+        isInside = false;
+      }
+
+      // Fallback if centroid is slightly outside irregular polygon boundary
+      if (!isInside) {
+        try {
+          const pt = turf.pointOnFeature(turf.feature(candidate.geometry));
+          isInside = turf.booleanPointInPolygon(pt, parentFeat as any);
+        } catch {}
+      }
+
+      if (isInside) {
+        matchedChildren.push({ ...candidate, parentId: parent.id });
+        matchedIds.push(candidate.id);
+      }
     }
 
-    if (isInside) {
-      matchedChildren.push({ ...candidate, parentId: parent.id });
-      matchedIds.push(candidate.id);
+    // Batch update parentId in ONE single query
+    if (matchedIds.length > 0) {
+      await db
+        .update(boundaries)
+        .set({ parentId: parent.id })
+        .where(inArray(boundaries.id, matchedIds));
     }
-  }
-
-  // Batch update parentId in ONE single query (instead of looping 500 times)
-  if (matchedIds.length > 0) {
-    await db
-      .update(boundaries)
-      .set({ parentId: parent.id })
-      .where(inArray(boundaries.id, matchedIds));
   }
 
   const sorted = matchedChildren.sort((a, b) => a.name.localeCompare(b.name));
