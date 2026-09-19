@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import * as turf from "@turf/turf";
-import { ArrowRight, Globe2, MapPinned, UploadCloud, Info, Loader2, Search, Check, MapPin, Sparkles, X } from "lucide-react";
+import { ArrowRight, Globe2, MapPinned, UploadCloud, Info, Loader2, Search, Check, MapPin, Sparkles, X, Download, FileCode } from "lucide-react";
 import Combobox from "@/components/ui/Combobox";
 import DynamicStudyAreaMap from "@/components/map/DynamicStudyAreaMap";
 
@@ -252,6 +252,44 @@ export default function StudioPage() {
     });
   }
 
+  const [downloadingFormat, setDownloadingFormat] = useState<string | null>(null);
+
+  async function handleDownloadBoundary(format: "shapefile" | "geojson" | "kml") {
+    if (!activeGeometry || !displayName) return;
+    setDownloadingFormat(format);
+    try {
+      const res = await fetch("/api/geo/export", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: displayName,
+          geometry: activeGeometry,
+          format,
+          areaKm2,
+          levelName: displayLevelName,
+        }),
+      });
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => null);
+        throw new Error(errJson?.error || "Failed to export boundary file");
+      }
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const cleanName = displayName.replace(/[^\w\s-]/gi, "").replace(/\s+/g, "_") || "study_area";
+      a.download = format === "shapefile" ? `${cleanName}_shapefile.zip` : format === "geojson" ? `${cleanName}.geojson` : `${cleanName}.kml`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err: any) {
+      alert("Vector export failed: " + (err.message || "Unknown error"));
+    } finally {
+      setDownloadingFormat(null);
+    }
+  }
+
   async function confirmStudyArea() {
     setCreateError(null);
     if ((mode === "upload" || mode === "search") && !customBoundary) {
@@ -300,8 +338,15 @@ export default function StudioPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to create project");
+      let data: any = null;
+      try {
+        data = await res.json();
+      } catch {
+        // failed to parse JSON (e.g. server timeout or html error)
+      }
+      if (!res.ok || !data?.project?.id) {
+        throw new Error(data?.error || `Failed to create project (${res.status}: ${res.statusText || "Server error"})`);
+      }
       router.push(`/studio/${data.project.id}/layers`);
     } catch (err) {
       setCreateError((err as Error).message);
@@ -627,6 +672,63 @@ export default function StudioPage() {
                     </p>
                   </div>
                 </div>
+
+                {/* Export Study Area Vector (Shapefile, GeoJSON, KML) */}
+                <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50/70 p-2.5 dark:border-slate-800 dark:bg-slate-800/40">
+                  <div className="mb-2 flex items-center justify-between">
+                    <span className="flex items-center gap-1.5 text-[11px] font-bold text-slate-700 dark:text-slate-200">
+                      <Download size={13} className="text-emerald-600 dark:text-emerald-400" /> Export Vector Boundary:
+                    </span>
+                    <span className="rounded bg-emerald-100/70 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300">
+                      ArcGIS / QGIS Ready
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-1.5">
+                    <button
+                      type="button"
+                      disabled={Boolean(downloadingFormat)}
+                      onClick={() => handleDownloadBoundary("shapefile")}
+                      className="flex items-center justify-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-[11px] font-semibold text-slate-700 shadow-sm transition hover:border-emerald-500 hover:bg-emerald-50 hover:text-emerald-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:border-emerald-500 dark:hover:bg-emerald-950/40 dark:hover:text-emerald-300"
+                      title="Download ESRI Shapefile (.zip) for QGIS or ArcGIS"
+                    >
+                      {downloadingFormat === "shapefile" ? (
+                        <Loader2 size={12} className="animate-spin text-emerald-600" />
+                      ) : (
+                        <Download size={12} className="text-emerald-600" />
+                      )}
+                      <span>Shapefile (.zip)</span>
+                    </button>
+                    <button
+                      type="button"
+                      disabled={Boolean(downloadingFormat)}
+                      onClick={() => handleDownloadBoundary("geojson")}
+                      className="flex items-center justify-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-[11px] font-semibold text-slate-700 shadow-sm transition hover:border-emerald-500 hover:bg-emerald-50 hover:text-emerald-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:border-emerald-500 dark:hover:bg-emerald-950/40 dark:hover:text-emerald-300"
+                      title="Download GeoJSON vector boundary"
+                    >
+                      {downloadingFormat === "geojson" ? (
+                        <Loader2 size={12} className="animate-spin text-blue-600" />
+                      ) : (
+                        <FileCode size={12} className="text-blue-500" />
+                      )}
+                      <span>GeoJSON</span>
+                    </button>
+                    <button
+                      type="button"
+                      disabled={Boolean(downloadingFormat)}
+                      onClick={() => handleDownloadBoundary("kml")}
+                      className="flex items-center justify-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-[11px] font-semibold text-slate-700 shadow-sm transition hover:border-emerald-500 hover:bg-emerald-50 hover:text-emerald-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:border-emerald-500 dark:hover:bg-emerald-950/40 dark:hover:text-emerald-300"
+                      title="Download Google Earth KML vector"
+                    >
+                      {downloadingFormat === "kml" ? (
+                        <Loader2 size={12} className="animate-spin text-amber-600" />
+                      ) : (
+                        <Globe2 size={12} className="text-amber-500" />
+                      )}
+                      <span>KML (Earth)</span>
+                    </button>
+                  </div>
+                </div>
+
                 <input
                   value={projectName}
                   onChange={(e) => setProjectName(e.target.value)}

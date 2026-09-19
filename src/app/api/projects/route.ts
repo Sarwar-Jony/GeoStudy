@@ -24,55 +24,74 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const body = await req.json().catch(() => null);
-  if (!body) return Response.json({ error: "Invalid request body" }, { status: 400 });
+  try {
+    const body = await req.json().catch(() => null);
+    if (!body) return Response.json({ error: "Invalid request body" }, { status: 400 });
 
-  const {
-    name,
-    countryIso3,
-    countryName,
-    level,
-    levelName,
-    boundaryId,
-    boundaryName,
-    pathLabels,
-    geometry,
-    bbox,
-    areaKm2,
-    isCustomGeometry,
-  } = body;
-
-  if (!countryIso3 || !geometry || !bbox || level === undefined || !boundaryName) {
-    return Response.json({ error: "Missing required study-area fields." }, { status: 400 });
-  }
-
-  const session = await getSession();
-  const ownerToken = await getOrCreateOwnerToken();
-
-  const [project] = await db
-    .insert(projects)
-    .values({
-      userId: session?.userId ?? null,
-      ownerToken,
-      shareToken: crypto.randomUUID(),
-      name: name?.trim() || `${boundaryName} Study Area`,
+    const {
+      name,
       countryIso3,
-      countryName: countryName || countryIso3,
+      countryName,
       level,
-      levelName: levelName || "Country",
-      boundaryId: boundaryId || null,
+      levelName,
+      boundaryId,
       boundaryName,
-      pathLabels: pathLabels || [],
+      pathLabels,
       geometry,
       bbox,
-      areaKm2: Number(areaKm2 || 0).toFixed(3),
-      isCustomGeometry: Boolean(isCustomGeometry),
-      selectedLayers: Array.isArray(body.selectedLayers) ? body.selectedLayers : [],
-      resolution: typeof body.resolution === "number" ? body.resolution : 100,
-      status: "draft",
-    })
-    .returning();
+      areaKm2,
+      isCustomGeometry,
+    } = body;
 
+    if (!countryIso3 || !geometry || !bbox || level === undefined || !boundaryName) {
+      return Response.json({ error: "Missing required study-area fields." }, { status: 400 });
+    }
 
-  return Response.json({ project });
+    const session = await getSession();
+    let ownerToken = "";
+    try {
+      ownerToken = await getOrCreateOwnerToken();
+    } catch {
+      ownerToken = crypto.randomUUID();
+    }
+
+    const [project] = await db
+      .insert(projects)
+      .values({
+        userId: session?.userId ?? null,
+        ownerToken,
+        shareToken: crypto.randomUUID(),
+        name: name?.trim() || `${boundaryName} Study Area`,
+        countryIso3,
+        countryName: countryName || countryIso3,
+        level,
+        levelName: levelName || "Country",
+        boundaryId: boundaryId || null,
+        boundaryName,
+        pathLabels: pathLabels || [],
+        geometry,
+        bbox,
+        areaKm2: Number(areaKm2 || 0).toFixed(3),
+        isCustomGeometry: Boolean(isCustomGeometry),
+        selectedLayers: Array.isArray(body.selectedLayers) ? body.selectedLayers : [],
+        resolution: typeof body.resolution === "number" ? body.resolution : 100,
+        status: "draft",
+      })
+      .returning();
+
+    if (!project) {
+      return Response.json({ error: "Database failed to create project row" }, { status: 500 });
+    }
+
+    return Response.json({ project });
+  } catch (err: any) {
+    console.error("Error creating project:", err);
+    return Response.json(
+      {
+        error: err?.message || "Failed to create project",
+        detail: String(err?.cause || err),
+      },
+      { status: 500 }
+    );
+  }
 }
