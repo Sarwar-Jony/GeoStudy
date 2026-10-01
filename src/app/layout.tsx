@@ -14,7 +14,7 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className="min-h-screen flex flex-col bg-[#f4f6f5] text-slate-900 antialiased dark:bg-[#0b1120] dark:text-slate-100">
+      <body className="min-h-screen flex flex-col bg-[#f8fafc] text-slate-900 antialiased dark:bg-[#060913] dark:text-slate-100 selection:bg-emerald-500/20 selection:text-emerald-700 dark:selection:bg-emerald-400/20 dark:selection:text-emerald-300">
         <Providers>
           <Navbar />
           <div className="flex-1">{children}</div>

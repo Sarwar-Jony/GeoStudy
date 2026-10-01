@@ -6,6 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Map, Moon, Sun, LayoutGrid, Menu, X, LogOut, User } from "lucide-react";
 import { useUIStore } from "@/store/uiStore";
+import { GeoStudyBrand } from "@/components/common/GeoStudyLogo";
 
 function GithubIcon({ className = "h-4 w-4" }: { className?: string }) {
   return (
@@ -52,15 +53,10 @@ export default function Navbar() {
   ];
 
   return (
-    <header className="sticky top-0 z-50 border-b border-slate-200/80 bg-white/80 backdrop-blur-md dark:border-slate-800/80 dark:bg-slate-950/80">
+    <header className="sticky top-0 z-50 border-b border-slate-200/80 bg-white/80 backdrop-blur-md dark:border-slate-800/80 dark:bg-[#060913]/85">
       <nav className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3 sm:px-6">
-        <Link href="/" className="flex items-center gap-2 font-semibold text-slate-900 dark:text-white">
-          <span className="grid h-9 w-9 place-items-center rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 text-white shadow-sm">
-            <Map size={18} />
-          </span>
-          <span className="text-lg tracking-tight">
-            GeoStudy<span className="text-emerald-600 dark:text-emerald-400">Area</span>
-          </span>
+        <Link href="/" className="transition hover:opacity-95">
+          <GeoStudyBrand />
         </Link>
 
         <div className="hidden items-center gap-1 md:flex">
@@ -114,7 +110,7 @@ export default function Navbar() {
               <Link href="/login" className="rounded-lg px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800">
                 Log in
               </Link>
-              <Link href="/register" className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-700 dark:bg-emerald-600 dark:hover:bg-emerald-500">
+              <Link href="/register" className="rounded-lg bg-gradient-to-r from-emerald-600 via-teal-600 to-cyan-600 px-3.5 py-2 text-sm font-semibold text-white shadow-sm shadow-emerald-950/20 transition hover:from-emerald-500 hover:to-cyan-500">
                 Sign up
               </Link>
             </div>

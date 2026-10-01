@@ -1,5 +1,6 @@
 import Link from "next/link";
-import { Map, GraduationCap, Heart, Shield, Code, Globe2 } from "lucide-react";
+import { GraduationCap, Heart, Shield, Code, Globe2 } from "lucide-react";
+import { GeoStudyBrand } from "@/components/common/GeoStudyLogo";
 
 function GithubIcon({ className = "h-4 w-4" }: { className?: string }) {
   return (
@@ -15,18 +16,13 @@ function GithubIcon({ className = "h-4 w-4" }: { className?: string }) {
 
 export default function Footer() {
   return (
-    <footer className="border-t border-slate-200 bg-white dark:border-slate-800/80 dark:bg-slate-950">
+    <footer className="border-t border-slate-200 bg-white dark:border-slate-800/80 dark:bg-[#060913]">
       <div className="mx-auto max-w-7xl px-4 py-12 sm:px-6">
         <div className="grid gap-8 md:grid-cols-12">
           {/* Brand & Project Summary */}
           <div className="space-y-3 md:col-span-5">
-            <Link href="/" className="inline-flex items-center gap-2 font-bold text-slate-900 dark:text-white">
-              <span className="grid h-9 w-9 place-items-center rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 text-white shadow-md">
-                <Map size={18} />
-              </span>
-              <span className="text-lg tracking-tight">
-                GeoStudy<span className="text-emerald-600 dark:text-emerald-400">Area</span>
-              </span>
+            <Link href="/" className="inline-flex items-center transition hover:opacity-95">
+              <GeoStudyBrand />
             </Link>
             <p className="max-w-sm text-xs leading-relaxed text-slate-500 dark:text-slate-400">
               Autonomous Geospatial Study Area Intelligence &amp; Remote Sensing Analytics Platform. Built for urban planners, geographers, and environmental scientists to generate publication-grade cartography, live satellite indices, and academic methodology monographs.
