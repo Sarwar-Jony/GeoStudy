@@ -2,7 +2,7 @@ import * as turf from "@turf/turf";
 import { db } from "@/db";
 import { boundaries } from "@/db/schema";
 import { and, eq, isNull, ilike, inArray } from "drizzle-orm";
-import { levelName } from "./countries";
+import { levelName, getCountry } from "./countries";
 
 const GADM_BASE = "https://geodata.ucdavis.edu/gadm/gadm4.1/json";
 const GEOBOUNDARIES_BASE = "https://www.geoboundaries.org/api/current/gbOpen";
@@ -12,6 +12,7 @@ type GbMeta = {
   admUnitCount: string;
   simplifiedGeometryGeoJSON: string;
   gjDownloadURL: string;
+  boundaryType?: string;
 };
 
 type GbFeature = {
@@ -29,18 +30,37 @@ const metaCache = new Map<string, GbMeta | null>();
 const geojsonCache = new Map<string, GbFeatureCollection>();
 const maxLevelCache = new Map<string, number>();
 
-async function fetchJson<T>(url: string, timeoutMs = 35000): Promise<T | null> {
+// Circuit breaker for GADM: if UC Davis is timing out or offline, don't stall for 35s on every request
+let gadmOfflineUntil = 0;
+
+function isGadmAvailable(): boolean {
+  return Date.now() > gadmOfflineUntil;
+}
+
+function markGadmFailed() {
+  gadmOfflineUntil = Date.now() + 15 * 60 * 1000; // Skip GADM for 15 minutes
+}
+
+async function fetchJson<T>(url: string, timeoutMs = 30000): Promise<T | null> {
+  const isGadm = url.includes("ucdavis.edu");
+  if (isGadm && !isGadmAvailable()) return null;
+  const timeout = isGadm ? 2500 : timeoutMs;
+
   try {
     const controller = new AbortController();
-    const t = setTimeout(() => controller.abort(), timeoutMs);
+    const t = setTimeout(() => controller.abort(), timeout);
     const res = await fetch(url, {
       signal: controller.signal,
       headers: { "User-Agent": "GeoStudy-Area-Analyzer/1.0" },
     });
     clearTimeout(t);
-    if (!res.ok) return null;
+    if (!res.ok) {
+      if (isGadm) markGadmFailed();
+      return null;
+    }
     return (await res.json()) as T;
   } catch {
+    if (isGadm) markGadmFailed();
     return null;
   }
 }
@@ -48,43 +68,62 @@ async function fetchJson<T>(url: string, timeoutMs = 35000): Promise<T | null> {
 async function getMeta(iso3: string, level: number): Promise<GbMeta | null> {
   const key = `${iso3}-ADM${level}`;
   if (metaCache.has(key)) return metaCache.get(key) ?? null;
-  const meta = await fetchJson<GbMeta>(`${GEOBOUNDARIES_BASE}/${iso3}/ADM${level}/`);
+
+  // Preload all levels for this country in 1 fast request
+  try {
+    const all = await fetchJson<GbMeta[]>(`${GEOBOUNDARIES_BASE}/${iso3}/ALL/`, 6000);
+    if (Array.isArray(all) && all.length > 0) {
+      for (const item of all) {
+        if (item.boundaryType) {
+          metaCache.set(`${iso3}-${item.boundaryType.toUpperCase()}`, item);
+        }
+      }
+      if (metaCache.has(key)) return metaCache.get(key) ?? null;
+    }
+  } catch {}
+
+  const meta = await fetchJson<GbMeta>(`${GEOBOUNDARIES_BASE}/${iso3}/ADM${level}/`, 6000);
   metaCache.set(key, meta);
   return meta;
 }
 
-/** Determine the deepest ADM level (0-4) available for a country (checks GADM first, then geoBoundaries). */
+/** Determine the deepest ADM level (0-4) available for a country (instant check via profile, then geoBoundaries). */
 export async function getMaxAdmLevel(iso3: string): Promise<number> {
   if (maxLevelCache.has(iso3)) return maxLevelCache.get(iso3)!;
-  let max = 0;
 
-  // 1. Try GADM v4.1 first (has levels 1-4 for most countries)
-  for (let lvl = 4; lvl >= 1; lvl--) {
-    try {
-      const res = await fetch(`${GADM_BASE}/gadm41_${iso3}_${lvl}.json`, {
-        method: "HEAD",
-        headers: { "User-Agent": "GeoStudy-Area-Analyzer/1.0" },
-      });
-      if (res.ok) {
-        max = lvl;
-        break;
-      }
-    } catch {}
+  // 1. Instant check via curated country profiles (0ms)
+  const country = getCountry(iso3);
+  if (country && country.levelNames && country.levelNames.length > 0) {
+    const depth = country.levelNames.length;
+    maxLevelCache.set(iso3, depth);
+    return depth;
   }
 
-  // 2. Fallback to geoBoundaries if GADM is unavailable
-  if (max === 0) {
-    for (let lvl = 4; lvl >= 1; lvl--) {
-      const meta = await getMeta(iso3, lvl);
-      if (meta) {
-        max = lvl;
-        break;
+  // 2. Fast check via geoBoundaries /ALL/ (1 request, pre-fills metaCache)
+  try {
+    const all = await fetchJson<GbMeta[]>(`${GEOBOUNDARIES_BASE}/${iso3}/ALL/`, 6000);
+    if (Array.isArray(all) && all.length > 0) {
+      let maxFound = 0;
+      for (const item of all) {
+        if (item.boundaryType && typeof item.boundaryType === "string") {
+          const m = item.boundaryType.match(/ADM(\d+)/i);
+          if (m) {
+            const num = parseInt(m[1], 10);
+            if (num > maxFound) maxFound = num;
+            metaCache.set(`${iso3}-${item.boundaryType.toUpperCase()}`, item);
+          }
+        }
+      }
+      if (maxFound > 0) {
+        maxLevelCache.set(iso3, maxFound);
+        return maxFound;
       }
     }
-  }
+  } catch {}
 
-  maxLevelCache.set(iso3, max);
-  return max;
+  const fallback = 3;
+  maxLevelCache.set(iso3, fallback);
+  return fallback;
 }
 
 /** Fetch GADM v4.1 FeatureCollection directly from UC Davis */
@@ -240,7 +279,7 @@ async function ensureLevelCached(iso3: string, level: number): Promise<BoundaryR
 
   if (existingGadm.length > 0) {
     const mapped = existingGadm.map(toBoundaryRow);
-    mapped.forEach((r) => singleBoundaryCache.set(r.id, r));
+    mapped.forEach((r: BoundaryRow) => singleBoundaryCache.set(r.id, r));
     levelCache.set(cacheKey, { time: Date.now(), rows: mapped });
     return mapped;
   }
@@ -259,7 +298,7 @@ async function ensureLevelCached(iso3: string, level: number): Promise<BoundaryR
 
     if (existingGb.length > 0) {
       const mapped = existingGb.map(toBoundaryRow);
-      mapped.forEach((r) => singleBoundaryCache.set(r.id, r));
+      mapped.forEach((r: BoundaryRow) => singleBoundaryCache.set(r.id, r));
       levelCache.set(cacheKey, { time: Date.now(), rows: mapped });
       return mapped;
     }
@@ -338,7 +377,7 @@ async function ensureLevelCached(iso3: string, level: number): Promise<BoundaryR
     );
 
   const mapped = inserted.map(toBoundaryRow);
-  mapped.forEach((r) => singleBoundaryCache.set(r.id, r));
+  mapped.forEach((r: BoundaryRow) => singleBoundaryCache.set(r.id, r));
   levelCache.set(cacheKey, { time: Date.now(), rows: mapped });
   return mapped;
 }
@@ -390,8 +429,8 @@ export async function getChildBoundaries(
     );
 
   if (directChildren.length > 0) {
-    const rows = directChildren.map(toBoundaryRow).sort((a, b) => a.name.localeCompare(b.name));
-    rows.forEach((r) => singleBoundaryCache.set(r.id, r));
+    const rows = directChildren.map(toBoundaryRow).sort((a: BoundaryRow, b: BoundaryRow) => a.name.localeCompare(b.name));
+    rows.forEach((r: BoundaryRow) => singleBoundaryCache.set(r.id, r));
     levelCache.set(cacheKey, { time: Date.now(), rows });
     return rows;
   }

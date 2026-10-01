@@ -76,8 +76,9 @@ export default function StudioPage() {
     staleTime: Infinity,
   });
 
+  const country = countriesData?.countries.find((c) => c.iso3 === countryIso3);
   const country0 = useBoundaryLevel(countryIso3, 0, null, true);
-  const maxLevel = country0.data?.maxLevel ?? 0;
+  const maxLevel = country0.data?.maxLevel ?? country?.levelNames?.length ?? 4;
 
   useEffect(() => {
     setSelectedPath([]);
@@ -126,7 +127,6 @@ export default function StudioPage() {
 
   const deepestSelected = [...selectedPath].reverse().find(Boolean) as BoundaryRow | undefined;
   const currentBoundary: BoundaryRow | undefined = deepestSelected;
-  const country = countriesData?.countries.find((c) => c.iso3 === countryIso3);
 
   const isCustomMode = mode === "upload" || mode === "search";
   const activeGeometry =
@@ -254,6 +254,51 @@ export default function StudioPage() {
 
   const [downloadingFormat, setDownloadingFormat] = useState<string | null>(null);
 
+  function getStudyAreaGeoJsonFilename(name: string): string {
+    const cleanName = (name || "study_area")
+      .trim()
+      .replace(/[^\w\s-]/gi, "")
+      .replace(/\s+/g, "_") || "study_area";
+    return cleanName.toLowerCase().startsWith("study_area")
+      ? `${cleanName}.geojson`
+      : `Study_area_${cleanName}.geojson`;
+  }
+
+  function handleExportGeoJsonDirect() {
+    if (!activeGeometry || !displayName) return;
+    const filename = getStudyAreaGeoJsonFilename(displayName);
+
+    const featureCollection: GeoJSON.FeatureCollection = {
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          properties: {
+            NAME: displayName,
+            LEVEL: displayLevelName || "Study Area",
+            COUNTRY: country?.name || countryIso3 || "Global",
+            AREA_KM2: areaKm2 ? Number(areaKm2).toFixed(2) : "N/A",
+            SOURCE: "GeoStudy",
+            EXPORTED_AT: new Date().toISOString(),
+          },
+          geometry: activeGeometry,
+        },
+      ],
+    };
+
+    const blob = new Blob([JSON.stringify(featureCollection, null, 2)], {
+      type: "application/geo+json;charset=utf-8",
+    });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.URL.revokeObjectURL(url);
+  }
+
   async function handleDownloadBoundary(format: "shapefile" | "geojson" | "kml") {
     if (!activeGeometry || !displayName) return;
     setDownloadingFormat(format);
@@ -270,7 +315,11 @@ export default function StudioPage() {
         }),
       });
       if (!res.ok) {
-        const errJson = await res.json().catch(() => null);
+        const rawErr = await res.text();
+        let errJson: any = null;
+        try {
+          errJson = JSON.parse(rawErr);
+        } catch {}
         throw new Error(errJson?.error || "Failed to export boundary file");
       }
       const blob = await res.blob();
@@ -278,7 +327,8 @@ export default function StudioPage() {
       const a = document.createElement("a");
       a.href = url;
       const cleanName = displayName.replace(/[^\w\s-]/gi, "").replace(/\s+/g, "_") || "study_area";
-      a.download = format === "shapefile" ? `${cleanName}_shapefile.zip` : format === "geojson" ? `${cleanName}.geojson` : `${cleanName}.kml`;
+      const geojsonFilename = getStudyAreaGeoJsonFilename(displayName);
+      a.download = format === "shapefile" ? `${cleanName}_shapefile.zip` : format === "geojson" ? geojsonFilename : `${cleanName}.kml`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -338,14 +388,25 @@ export default function StudioPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
+
+      const rawText = await res.text();
       let data: any = null;
-      try {
-        data = await res.json();
-      } catch {
-        // failed to parse JSON (e.g. server timeout or html error)
+      if (rawText) {
+        try {
+          data = JSON.parse(rawText);
+        } catch {
+          // Response is not valid JSON
+        }
       }
+
       if (!res.ok || !data?.project?.id) {
-        throw new Error(data?.error || `Failed to create project (${res.status}: ${res.statusText || "Server error"})`);
+        const errorMsg =
+          data?.error ||
+          data?.detail ||
+          (rawText && !rawText.startsWith("<")
+            ? rawText
+            : `Failed to create project (Server responded with status ${res.status}: ${res.statusText || "Error"})`);
+        throw new Error(errorMsg);
       }
       router.push(`/studio/${data.project.id}/layers`);
     } catch (err) {
@@ -736,14 +797,27 @@ export default function StudioPage() {
                   className="mt-3 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs outline-none focus:border-emerald-500 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                 />
                 {createError && <p className="mt-2 text-xs font-medium text-red-600">{createError}</p>}
-                <button
-                  onClick={confirmStudyArea}
-                  disabled={creating}
-                  className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-700 disabled:opacity-60 dark:bg-emerald-600 dark:hover:bg-emerald-500"
-                >
-                  {creating ? <Loader2 size={16} className="animate-spin" /> : <ArrowRight size={16} />}
-                  Confirm Study Area &amp; Continue
-                </button>
+                
+                <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                  <button
+                    type="button"
+                    onClick={handleExportGeoJsonDirect}
+                    className="flex flex-1 items-center justify-center gap-2 rounded-lg border border-emerald-600/70 bg-emerald-50 px-3 py-2.5 text-xs sm:text-sm font-semibold text-emerald-800 shadow-sm transition hover:bg-emerald-100 hover:border-emerald-600 dark:border-emerald-500/60 dark:bg-emerald-950/40 dark:text-emerald-300 dark:hover:bg-emerald-900/50"
+                    title={`Export ${displayName} as GeoJSON`}
+                  >
+                    <Download size={15} className="text-emerald-600 dark:text-emerald-400" />
+                    Export GeoJSON File
+                  </button>
+
+                  <button
+                    onClick={confirmStudyArea}
+                    disabled={creating}
+                    className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-slate-900 px-4 py-2.5 text-xs sm:text-sm font-semibold text-white shadow-sm transition hover:bg-slate-700 disabled:opacity-60 dark:bg-emerald-600 dark:hover:bg-emerald-500"
+                  >
+                    {creating ? <Loader2 size={16} className="animate-spin" /> : <ArrowRight size={16} />}
+                    Confirm Study Area &amp; Continue
+                  </button>
+                </div>
               </>
             ) : (
               <p className="text-sm text-slate-400">Pick a country to get started, or upload a custom boundary.</p>

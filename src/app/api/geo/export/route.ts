@@ -80,12 +80,16 @@ export async function POST(req: NextRequest) {
       ],
     };
 
+    const geojsonFilename = cleanName.toLowerCase().startsWith("study_area")
+      ? `${cleanName}.geojson`
+      : `Study_area_${cleanName}.geojson`;
+
     if (format === "geojson") {
       const jsonStr = JSON.stringify(featureCollection, null, 2);
       return new Response(jsonStr, {
         headers: {
           "Content-Type": "application/geo+json",
-          "Content-Disposition": `attachment; filename="${cleanName}.geojson"`,
+          "Content-Disposition": `attachment; filename="${geojsonFilename}"`,
         },
       });
     }
@@ -101,8 +105,9 @@ export async function POST(req: NextRequest) {
     }
 
     // Default: ESRI Shapefile (.zip)
-    const zipBuffer: Buffer = await shpwrite.zip(featureCollection, {
+    const zipBuffer: any = await (shpwrite as any).zip(featureCollection, {
       outputType: "nodebuffer",
+      compression: "DEFLATE",
     });
 
     return new Response(new Uint8Array(zipBuffer), {

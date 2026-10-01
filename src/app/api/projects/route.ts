@@ -55,6 +55,9 @@ export async function POST(req: NextRequest) {
       ownerToken = crypto.randomUUID();
     }
 
+    const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    const safeBoundaryId = typeof boundaryId === "string" && UUID_REGEX.test(boundaryId) ? boundaryId : null;
+
     const [project] = await db
       .insert(projects)
       .values({
@@ -66,7 +69,7 @@ export async function POST(req: NextRequest) {
         countryName: countryName || countryIso3,
         level,
         levelName: levelName || "Country",
-        boundaryId: boundaryId || null,
+        boundaryId: safeBoundaryId,
         boundaryName,
         pathLabels: pathLabels || [],
         geometry,
