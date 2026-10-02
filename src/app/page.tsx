@@ -32,7 +32,10 @@ import {
   GitCompareArrows,
   Search,
   Maximize2,
-  X
+  X,
+  Clock,
+  Calendar,
+  TrendingUp
 } from "lucide-react";
 import DynamicGeoBackground from "@/components/common/DynamicGeoBackground";
 import {
@@ -222,9 +225,53 @@ const FAQS = [
 export default function HomePage() {
   const [activeCategory, setActiveCategory] = useState("all");
   const [swipePosition, setSwipePosition] = useState(50);
+  const [comparisonMode, setComparisonMode] = useState<"temporal" | "spectral">("temporal");
   const [openFaq, setOpenFaq] = useState<number | null>(0);
   const [activeFigureTab, setActiveFigureTab] = useState<"publication" | "mcda">("publication");
   const [lightboxImage, setLightboxImage] = useState<{ src: string; title: string; caption: string } | null>(null);
+
+  const COMPARISON_DATA = {
+    temporal: {
+      title: "Same Study Area: Before & After Analysis",
+      subtitle: "Delta Estuary AOI (2,450 km²) · 2018 vs. 2024 Time-Series",
+      left: {
+        image: "/images/hero-study-2018-before.jpg",
+        label: "2018 Historical Baseline",
+        badgeClass: "border-emerald-500/40 bg-slate-950/85 text-emerald-300",
+        icon: <Calendar size={12} className="text-emerald-400" />
+      },
+      right: {
+        image: "/images/hero-study-2024-after.jpg",
+        label: "2024 Urban Expansion",
+        badgeClass: "border-amber-500/40 bg-slate-950/85 text-amber-300",
+        icon: <TrendingUp size={12} className="text-amber-400" />
+      },
+      lightbox: {
+        title: "Temporal Change Detection (2018 vs. 2024)",
+        caption: "High-resolution satellite time-series showing rapid conversion of natural delta wetlands and agricultural plots into urban built-up infrastructure over 6 years in the exact same spatial boundary."
+      }
+    },
+    spectral: {
+      title: "Same Study Area: Multi-Spectral Analysis",
+      subtitle: "Delta Estuary AOI (2,450 km²) · Sentinel-2 10m Dual-Band",
+      left: {
+        image: "/images/hero-study-2024-after.jpg",
+        label: "Sentinel-2 Optical (10m True Color)",
+        badgeClass: "border-sky-500/40 bg-slate-950/85 text-sky-300",
+        icon: <Eye size={12} className="text-sky-400" />
+      },
+      right: {
+        image: "/images/hero-study-ndvi-aligned.jpg",
+        label: "Sentinel-2 NDVI Canopy (10m)",
+        badgeClass: "border-emerald-500/40 bg-slate-950/85 text-emerald-300",
+        icon: <Leaf size={12} className="text-emerald-400" />
+      },
+      lightbox: {
+        title: "Optical Multispectral vs. NDVI Analytical Layer",
+        caption: "Pixel-aligned comparison between Sentinel-2 10m natural color RGB and the calculated Normalized Difference Vegetation Index (NDVI) highlighting canopy health and hydrology."
+      }
+    }
+  };
 
   const filteredItems =
     activeCategory === "all"
@@ -312,49 +359,79 @@ export default function HomePage() {
             <div className="relative lg:col-span-5">
               <div className="relative mx-auto w-full max-w-lg rounded-3xl border border-slate-200 bg-white p-4 shadow-2xl shadow-slate-900/10 dark:border-slate-800 dark:bg-slate-900">
                 {/* Header of Preview */}
-                <div className="mb-3 flex items-center justify-between border-b border-slate-100 pb-3 dark:border-slate-800">
+                <div className="mb-2.5 flex items-center justify-between border-b border-slate-100 pb-2.5 dark:border-slate-800">
                   <div className="flex items-center gap-2">
                     <span className="h-2.5 w-2.5 rounded-full bg-emerald-500 animate-pulse" />
                     <div>
                       <h2 className="text-xs font-bold text-slate-900 dark:text-white">
-                        Interactive Dual-Layer Comparison
+                        {COMPARISON_DATA[comparisonMode].title}
                       </h2>
-                      <p className="text-[10px] text-slate-400">Dhaka Division Study Area (20,973 km²)</p>
+                      <p className="text-[10px] text-slate-400">
+                        {COMPARISON_DATA[comparisonMode].subtitle}
+                      </p>
                     </div>
                   </div>
                   <span className="rounded-lg bg-emerald-100 px-2 py-0.5 text-[10px] font-extrabold text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300">
-                    Live Demo
+                    100% Aligned
                   </span>
+                </div>
+
+                {/* Mode Selector Tabs: Temporal Before-After vs Spectral Analysis */}
+                <div className="mb-3 grid grid-cols-2 gap-1 rounded-xl bg-slate-100 p-1 dark:bg-slate-800/80">
+                  <button
+                    type="button"
+                    onClick={() => setComparisonMode("temporal")}
+                    className={`flex items-center justify-center gap-1.5 rounded-lg py-1.5 text-[11px] font-bold transition ${
+                      comparisonMode === "temporal"
+                        ? "bg-white text-emerald-700 shadow-sm dark:bg-slate-950 dark:text-emerald-300 border border-slate-200/80 dark:border-slate-700"
+                        : "text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200"
+                    }`}
+                  >
+                    <Clock size={12} className={comparisonMode === "temporal" ? "text-emerald-600 dark:text-emerald-400" : ""} />
+                    <span>Before vs. After (2018 ↔ 2024)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setComparisonMode("spectral")}
+                    className={`flex items-center justify-center gap-1.5 rounded-lg py-1.5 text-[11px] font-bold transition ${
+                      comparisonMode === "spectral"
+                        ? "bg-white text-emerald-700 shadow-sm dark:bg-slate-950 dark:text-emerald-300 border border-slate-200/80 dark:border-slate-700"
+                        : "text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200"
+                    }`}
+                  >
+                    <Layers size={12} className={comparisonMode === "spectral" ? "text-emerald-600 dark:text-emerald-400" : ""} />
+                    <span>Optical vs. NDVI Canopy</span>
+                  </button>
                 </div>
 
                 {/* High-resolution interactive swipe comparison viewport */}
                 <div className="relative h-72 sm:h-80 w-full overflow-hidden rounded-2xl border border-slate-200 bg-slate-950 select-none dark:border-slate-800 shadow-inner group">
-                  {/* Left layer (DEM Topography Image) */}
+                  {/* Left layer (Baseline / Optical) */}
                   <div className="absolute inset-0">
                     <img
-                      src="/images/hero-dem-elevation.jpg"
-                      alt="Digital Elevation Model (DEM) Topography"
+                      src={COMPARISON_DATA[comparisonMode].left.image}
+                      alt={COMPARISON_DATA[comparisonMode].left.label}
                       className="h-full w-full object-cover"
                     />
-                    <div className="absolute bottom-11 left-3 z-10 flex items-center gap-1.5 rounded-lg border border-amber-500/40 bg-slate-950/85 px-2.5 py-1 text-[10px] font-extrabold text-amber-300 shadow-lg backdrop-blur-md">
-                      <Mountain size={12} className="text-amber-400" />
-                      <span>30m DEM Elevation (Copernicus GLO-30)</span>
+                    <div className={`absolute bottom-11 left-3 z-10 flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[10px] font-extrabold shadow-lg backdrop-blur-md ${COMPARISON_DATA[comparisonMode].left.badgeClass}`}>
+                      {COMPARISON_DATA[comparisonMode].left.icon}
+                      <span>{COMPARISON_DATA[comparisonMode].left.label}</span>
                     </div>
                   </div>
 
-                  {/* Right layer (NDVI Vegetation) clipped by swipe position */}
+                  {/* Right layer (Expansion / NDVI) clipped by swipe position */}
                   <div
                     style={{ clipPath: `inset(0 0 0 ${swipePosition}%)` }}
                     className="absolute inset-0"
                   >
                     <img
-                      src="/images/hero-ndvi-vegetation.jpg"
-                      alt="Sentinel-2 NDVI Canopy Remote Sensing"
+                      src={COMPARISON_DATA[comparisonMode].right.image}
+                      alt={COMPARISON_DATA[comparisonMode].right.label}
                       className="h-full w-full object-cover"
                     />
-                    <div className="absolute bottom-11 right-3 z-10 flex items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-slate-950/85 px-2.5 py-1 text-[10px] font-extrabold text-emerald-300 shadow-lg backdrop-blur-md">
-                      <Leaf size={12} className="text-emerald-400" />
-                      <span>Sentinel-2 NDVI Canopy (10m)</span>
+                    <div className={`absolute bottom-11 right-3 z-10 flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[10px] font-extrabold shadow-lg backdrop-blur-md ${COMPARISON_DATA[comparisonMode].right.badgeClass}`}>
+                      {COMPARISON_DATA[comparisonMode].right.icon}
+                      <span>{COMPARISON_DATA[comparisonMode].right.label}</span>
                     </div>
                   </div>
 
@@ -371,9 +448,9 @@ export default function HomePage() {
                   {/* Expand button */}
                   <button
                     onClick={() => setLightboxImage({
-                      src: swipePosition > 50 ? "/images/hero-dem-elevation.jpg" : "/images/hero-ndvi-vegetation.jpg",
-                      title: "Satellite Earth Observation & Topographic Relief",
-                      caption: "30m Copernicus Digital Elevation Model (DEM) and Sentinel-2 10m Normalized Difference Vegetation Index (NDVI) raster comparison."
+                      src: swipePosition > 50 ? COMPARISON_DATA[comparisonMode].left.image : COMPARISON_DATA[comparisonMode].right.image,
+                      title: COMPARISON_DATA[comparisonMode].lightbox.title,
+                      caption: COMPARISON_DATA[comparisonMode].lightbox.caption
                     })}
                     className="absolute top-3 right-3 z-20 rounded-full bg-slate-950/70 p-2 text-white/80 backdrop-blur-md transition hover:bg-slate-900 hover:text-white"
                     title="Expand view"
