@@ -604,11 +604,25 @@ export default function StudioPage() {
                 const label = country?.levelNames[idx] || `Level ${level}`;
                 const q = levelQueries[idx];
                 const parent = idx === 0 ? true : Boolean(selectedPath[idx - 1]);
-                const disabled = level > maxLevel || !parent;
+                const isNoSubdivisions = Boolean(parent && !q?.isLoading && q?.data && (!q?.data.items || q?.data.items.length === 0));
+                const disabled = level > maxLevel || !parent || isNoSubdivisions;
+                const placeholder = disabled
+                  ? !parent
+                    ? "Select the level above first"
+                    : isNoSubdivisions
+                    ? "No further sub-districts (Area fully specified)"
+                    : "Not available for this country"
+                  : `Choose ${label.toLowerCase()}`;
+
                 return (
                   <div key={level}>
-                    <label className="mb-1.5 block text-xs font-semibold text-slate-600 dark:text-slate-300">
-                      {label} {level > maxLevel && <span className="font-normal text-slate-400">(not available)</span>}
+                    <label className="mb-1.5 flex items-center justify-between text-xs font-semibold text-slate-600 dark:text-slate-300">
+                      <span>{label}</span>
+                      {level > maxLevel ? (
+                        <span className="font-normal text-[11px] text-slate-400">(not available)</span>
+                      ) : isNoSubdivisions ? (
+                        <span className="font-normal text-[11px] text-emerald-600 dark:text-emerald-400">✓ Fully specified</span>
+                      ) : null}
                     </label>
                     <Combobox
                       options={(q?.data?.items || []).map((b) => ({ value: b.id, label: b.name }))}
@@ -618,8 +632,11 @@ export default function StudioPage() {
                       onChange={(id) => {
                         const found = q?.data?.items?.find((b) => b.id === id) ?? null;
                         updateLevel(idx, found);
+                        if (found) {
+                          setProjectName(found.name);
+                        }
                       }}
-                      placeholder={disabled ? "Select the level above first" : `Choose ${label.toLowerCase()}`}
+                      placeholder={placeholder}
                     />
                   </div>
                 );

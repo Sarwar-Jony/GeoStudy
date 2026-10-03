@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, Search, X, Check } from "lucide-react";
+import { ChevronDown, Search, X, Check, Loader2 } from "lucide-react";
 
 export interface ComboboxOption {
   value: string;
@@ -19,7 +19,7 @@ interface Props {
   emptyLabel?: string;
 }
 
-export default function Combobox({ options, value, onChange, placeholder = "Select...", disabled, loading, emptyLabel = "No results" }: Props) {
+export default function Combobox({ options, value, onChange, placeholder = "Select...", disabled, loading, emptyLabel = "No results found" }: Props) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const rootRef = useRef<HTMLDivElement>(null);
@@ -44,16 +44,19 @@ export default function Combobox({ options, value, onChange, placeholder = "Sele
     <div ref={rootRef} className="relative">
       <button
         type="button"
-        disabled={disabled}
+        disabled={disabled || loading}
         onClick={() => setOpen((v) => !v)}
         className={`flex w-full items-center justify-between gap-2 rounded-lg border px-3 py-2.5 text-left text-sm transition ${
           disabled
             ? "cursor-not-allowed border-slate-200 bg-slate-50 text-slate-400 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-600"
+            : loading
+            ? "cursor-wait border-emerald-300/70 bg-emerald-50/40 text-emerald-800 dark:border-emerald-800/70 dark:bg-emerald-950/20 dark:text-emerald-300"
             : "border-slate-300 bg-white text-slate-800 hover:border-emerald-400 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
         }`}
       >
-        <span className="truncate">
-          {loading ? "Loading..." : selected ? selected.label : placeholder}
+        <span className="truncate flex items-center gap-1.5">
+          {loading && <Loader2 size={13} className="animate-spin text-emerald-600 dark:text-emerald-400 shrink-0" />}
+          {loading ? "Loading areas..." : selected ? selected.label : placeholder}
         </span>
         <span className="flex items-center gap-1">
           {selected && !disabled && (
@@ -83,25 +86,33 @@ export default function Combobox({ options, value, onChange, placeholder = "Sele
             />
           </div>
           <div className="max-h-60 overflow-y-auto py-1">
-            {filtered.length === 0 && <p className="px-3 py-3 text-xs text-slate-400">{emptyLabel}</p>}
-            {filtered.map((o) => (
-              <button
-                key={o.value}
-                type="button"
-                onClick={() => {
-                  onChange(o.value);
-                  setOpen(false);
-                  setQuery("");
-                }}
-                className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm hover:bg-emerald-50 dark:hover:bg-emerald-500/10"
-              >
-                <span>
-                  <span className="text-slate-800 dark:text-slate-100">{o.label}</span>
-                  {o.sublabel && <span className="ml-1.5 text-xs text-slate-400">{o.sublabel}</span>}
-                </span>
-                {o.value === value && <Check size={14} className="text-emerald-600" />}
-              </button>
-            ))}
+            {loading ? (
+              <div className="flex items-center justify-center gap-2 py-6 text-xs font-medium text-emerald-600 dark:text-emerald-400">
+                <Loader2 size={15} className="animate-spin" />
+                <span>Loading available areas...</span>
+              </div>
+            ) : filtered.length === 0 ? (
+              <p className="px-3 py-3 text-xs text-slate-400">{emptyLabel}</p>
+            ) : (
+              filtered.map((o) => (
+                <button
+                  key={o.value}
+                  type="button"
+                  onClick={() => {
+                    onChange(o.value);
+                    setOpen(false);
+                    setQuery("");
+                  }}
+                  className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm hover:bg-emerald-50 dark:hover:bg-emerald-500/10"
+                >
+                  <span>
+                    <span className="text-slate-800 dark:text-slate-100">{o.label}</span>
+                    {o.sublabel && <span className="ml-1.5 text-xs text-slate-400">{o.sublabel}</span>}
+                  </span>
+                  {o.value === value && <Check size={14} className="text-emerald-600" />}
+                </button>
+              ))
+            )}
           </div>
         </div>
       )}

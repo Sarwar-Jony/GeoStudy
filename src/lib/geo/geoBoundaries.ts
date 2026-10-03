@@ -2,7 +2,7 @@ import * as turf from "@turf/turf";
 import { db } from "@/db";
 import { boundaries } from "@/db/schema";
 import { and, eq, isNull, ilike, inArray } from "drizzle-orm";
-import { levelName, getCountry } from "./countries";
+import { levelName, getCountry, COUNTRY_MAX_LEVELS } from "./countries";
 
 const GADM_BASE = "https://geodata.ucdavis.edu/gadm/gadm4.1/json";
 const GEOBOUNDARIES_BASE = "https://www.geoboundaries.org/api/current/gbOpen";
@@ -30,7 +30,7 @@ const metaCache = new Map<string, GbMeta | null>();
 const geojsonCache = new Map<string, GbFeatureCollection>();
 const maxLevelCache = new Map<string, number>();
 
-// Circuit breaker for GADM: if UC Davis is timing out or offline, don't stall for 35s on every request
+// Circuit breaker for GADM: if UC Davis is down, avoid long stalls
 let gadmOfflineUntil = 0;
 
 function isGadmAvailable(): boolean {
@@ -38,13 +38,14 @@ function isGadmAvailable(): boolean {
 }
 
 function markGadmFailed() {
-  gadmOfflineUntil = Date.now() + 15 * 60 * 1000; // Skip GADM for 15 minutes
+  gadmOfflineUntil = Date.now() + 30 * 1000; // 30-second backoff only
 }
 
 async function fetchJson<T>(url: string, timeoutMs = 30000): Promise<T | null> {
   const isGadm = url.includes("ucdavis.edu");
   if (isGadm && !isGadmAvailable()) return null;
-  const timeout = isGadm ? 2500 : timeoutMs;
+  // GADM files can be 2-10MB, allow generous 25s timeout
+  const timeout = isGadm ? 25000 : timeoutMs;
 
   try {
     const controller = new AbortController();
@@ -55,7 +56,8 @@ async function fetchJson<T>(url: string, timeoutMs = 30000): Promise<T | null> {
     });
     clearTimeout(t);
     if (!res.ok) {
-      if (isGadm) markGadmFailed();
+      // 404 is normal for admin levels that do not exist in a country; do not trip circuit breaker
+      if (isGadm && res.status !== 404) markGadmFailed();
       return null;
     }
     return (await res.json()) as T;
@@ -89,13 +91,21 @@ async function getMeta(iso3: string, level: number): Promise<GbMeta | null> {
 
 /** Determine the deepest ADM level (0-4) available for a country (instant check via profile, then geoBoundaries). */
 export async function getMaxAdmLevel(iso3: string): Promise<number> {
-  if (maxLevelCache.has(iso3)) return maxLevelCache.get(iso3)!;
+  const code = iso3.toUpperCase();
+  if (maxLevelCache.has(code)) return maxLevelCache.get(code)!;
 
-  // 1. Instant check via curated country profiles (0ms)
-  const country = getCountry(iso3);
+  // 1. Instant check via curated country max-levels
+  if (COUNTRY_MAX_LEVELS[code] !== undefined) {
+    const depth = COUNTRY_MAX_LEVELS[code];
+    maxLevelCache.set(code, depth);
+    return depth;
+  }
+
+  // 2. Instant check via curated country profiles (0ms)
+  const country = getCountry(code);
   if (country && country.levelNames && country.levelNames.length > 0) {
     const depth = country.levelNames.length;
-    maxLevelCache.set(iso3, depth);
+    maxLevelCache.set(code, depth);
     return depth;
   }
 
@@ -343,7 +353,9 @@ async function ensureLevelCached(iso3: string, level: number): Promise<BoundaryR
       parentId = parentByExternalId.get(parentExternalId)!;
     }
 
+    const id = crypto.randomUUID();
     return {
+      id,
       countryIso3: iso3,
       level,
       levelName: lvlName,
@@ -365,18 +377,21 @@ async function ensureLevelCached(iso3: string, level: number): Promise<BoundaryR
     await db.insert(boundaries).values(chunk).onConflictDoNothing();
   }
 
-  const inserted = await db
-    .select()
-    .from(boundaries)
-    .where(
-      and(
-        eq(boundaries.countryIso3, iso3),
-        eq(boundaries.level, level),
-        eq(boundaries.source, usedSource)
-      )
-    );
+  const mapped: BoundaryRow[] = rows.map((r) => ({
+    id: r.id,
+    countryIso3: r.countryIso3,
+    level: r.level,
+    levelName: r.levelName,
+    externalId: r.externalId,
+    parentId: r.parentId,
+    name: r.name,
+    geometry: r.geometry as GeoJSON.Geometry,
+    bbox: r.bbox,
+    areaKm2: Number(r.areaKm2),
+    centroid: r.centroid,
+    source: r.source,
+  }));
 
-  const mapped = inserted.map(toBoundaryRow);
   mapped.forEach((r: BoundaryRow) => singleBoundaryCache.set(r.id, r));
   levelCache.set(cacheKey, { time: Date.now(), rows: mapped });
   return mapped;
@@ -442,7 +457,23 @@ export async function getChildBoundaries(
   // Match children by parentId
   let matchedChildren = allCandidates.filter((c) => c.parentId === parent.id);
 
-  // If still empty (e.g. legacy or geoBoundaries fallback without GID), fallback to fast Centroid Point-in-Polygon
+  // If not yet linked by parentId, try instant deterministic GADM GID prefix matching (0.01ms)
+  if (matchedChildren.length === 0 && parent.externalId) {
+    const parentGidBase = parent.externalId.replace(/_\d+$/, "");
+    const gidPrefix = `${parentGidBase}.`;
+    const matchedByGid = allCandidates.filter((c) => c.externalId.startsWith(gidPrefix));
+
+    if (matchedByGid.length > 0) {
+      matchedChildren = matchedByGid.map((c) => ({ ...c, parentId: parent.id }));
+      const matchedIds = matchedByGid.map((c) => c.id);
+      await db
+        .update(boundaries)
+        .set({ parentId: parent.id })
+        .where(inArray(boundaries.id, matchedIds));
+    }
+  }
+
+  // If still empty (e.g. legacy boundaries without GID), fallback to fast Centroid Point-in-Polygon
   if (matchedChildren.length === 0) {
     const parentBbox = parent.bbox;
     const parentFeat = turf.feature(parent.geometry);
@@ -510,7 +541,22 @@ export async function searchBoundaries(iso3: string, query: string): Promise<Bou
   const rows = await db
     .select()
     .from(boundaries)
-    .where(and(eq(boundaries.countryIso3, iso3), ilike(boundaries.name, `%${q}%`)))
+    .where(
+      and(
+        eq(boundaries.countryIso3, iso3),
+        eq(boundaries.source, "GADM"),
+        ilike(boundaries.name, `%${q}%`)
+      )
+    )
     .limit(10);
   return rows.map((row: any) => toBoundaryRow(row));
+}
+
+/** Invalidate all in-memory boundary caches */
+export function clearBoundaryCaches() {
+  metaCache.clear();
+  geojsonCache.clear();
+  maxLevelCache.clear();
+  levelCache.clear();
+  singleBoundaryCache.clear();
 }
