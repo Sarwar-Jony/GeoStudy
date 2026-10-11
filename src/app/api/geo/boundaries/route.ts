@@ -3,6 +3,7 @@ import { getChildBoundaries, getBoundaryById, getCountryBoundary, getMaxAdmLevel
 import { levelName } from "@/lib/geo/countries";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 // GET /api/geo/boundaries?country=BGD&level=1&parentId=<uuid|none>
 export async function GET(req: NextRequest) {

@@ -5,6 +5,7 @@ import { PGlite } from "@electric-sql/pglite";
 import * as schema from "./schema";
 import path from "path";
 import fs from "fs";
+import os from "os";
 
 const databaseUrl = process.env.DATABASE_URL;
 
@@ -15,9 +16,17 @@ const globalForDb = globalThis as typeof globalThis & {
 };
 
 function initPglite() {
-  const dataDir = path.join(process.cwd(), ".pgdata");
+  const isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+  const dataDir = isServerless
+    ? path.join(os.tmpdir(), ".pgdata")
+    : path.join(process.cwd(), ".pgdata");
+
   if (!fs.existsSync(dataDir)) {
-    fs.mkdirSync(dataDir, { recursive: true });
+    try {
+      fs.mkdirSync(dataDir, { recursive: true });
+    } catch (e) {
+      console.warn("Could not create PGlite dataDir:", e);
+    }
   }
 
   // Remove stale postmaster.pid lock file if present from a crashed process
@@ -82,14 +91,19 @@ let dbExport: any;
 let poolExport: Pool | undefined;
 
 if (databaseUrl && (databaseUrl.startsWith("postgres://") || databaseUrl.startsWith("postgresql://"))) {
-  poolExport =
-    globalForDb.__arenaNextJsPostgresqlPool ??
-    new Pool({
+  if (!globalForDb.__arenaNextJsPostgresqlPool) {
+    globalForDb.__arenaNextJsPostgresqlPool = new Pool({
       connectionString: databaseUrl,
+      ssl:
+        databaseUrl.includes("sslmode=require") || process.env.NODE_ENV === "production"
+          ? { rejectUnauthorized: false }
+          : undefined,
+      max: 10,
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 10000,
     });
-  if (process.env.NODE_ENV !== "production") {
-    globalForDb.__arenaNextJsPostgresqlPool = poolExport;
   }
+  poolExport = globalForDb.__arenaNextJsPostgresqlPool;
   dbExport = drizzleNodePg(poolExport, { schema });
 } else {
   // Use dynamic proxy so if PGlite needs to self-heal or restart, db operations remain seamless

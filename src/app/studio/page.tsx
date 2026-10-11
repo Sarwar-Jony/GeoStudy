@@ -44,12 +44,17 @@ function useBoundaryLevel(country: string, level: number, parentId: string | nul
       const params = new URLSearchParams({ country, level: String(level) });
       if (parentId) params.set("parentId", parentId);
       const res = await fetch(`/api/geo/boundaries?${params.toString()}`);
-      if (!res.ok) throw new Error("Failed to load boundaries");
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => null);
+        throw new Error(errJson?.error || "Failed to load boundaries");
+      }
       return res.json();
     },
     enabled,
     staleTime: Infinity,
     gcTime: 24 * 60 * 60_000,
+    retry: 2,
+    retryDelay: (attempt) => Math.min(attempt * 1000, 3000),
   });
 }
 
@@ -605,25 +610,36 @@ export default function StudioPage() {
                 const q = levelQueries[idx];
                 const parent = idx === 0 ? true : Boolean(selectedPath[idx - 1]);
                 const isNoSubdivisions = Boolean(parent && !q?.isLoading && q?.data && (!q?.data.items || q?.data.items.length === 0));
-                const disabled = level > maxLevel || !parent || isNoSubdivisions;
+                const hasError = Boolean(parent && q?.isError);
+                const disabled = level > maxLevel || !parent || isNoSubdivisions || hasError;
                 const placeholder = disabled
                   ? !parent
                     ? "Select the level above first"
                     : isNoSubdivisions
                     ? "No further sub-districts (Area fully specified)"
+                    : hasError
+                    ? `Failed to load ${label.toLowerCase()} (Click Retry)`
                     : "Not available for this country"
                   : `Choose ${label.toLowerCase()}`;
 
                 return (
                   <div key={level}>
-                    <label className="mb-1.5 flex items-center justify-between text-xs font-semibold text-slate-600 dark:text-slate-300">
+                    <div className="mb-1.5 flex items-center justify-between text-xs font-semibold text-slate-600 dark:text-slate-300">
                       <span>{label}</span>
                       {level > maxLevel ? (
                         <span className="font-normal text-[11px] text-slate-400">(not available)</span>
                       ) : isNoSubdivisions ? (
                         <span className="font-normal text-[11px] text-emerald-600 dark:text-emerald-400">✓ Fully specified</span>
+                      ) : hasError ? (
+                        <button
+                          type="button"
+                          onClick={() => q.refetch()}
+                          className="font-normal text-[11px] text-rose-500 hover:text-rose-600 hover:underline cursor-pointer flex items-center gap-1"
+                        >
+                          ↻ Failed (Click to retry)
+                        </button>
                       ) : null}
-                    </label>
+                    </div>
                     <Combobox
                       options={(q?.data?.items || []).map((b) => ({ value: b.id, label: b.name }))}
                       value={selectedPath[idx]?.id ?? null}

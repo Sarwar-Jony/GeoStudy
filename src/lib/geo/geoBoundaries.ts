@@ -276,18 +276,23 @@ async function ensureLevelCached(iso3: string, level: number): Promise<BoundaryR
   }
 
   // 1. Check if GADM rows already exist in DB
-  const existingGadm = await db
-    .select()
-    .from(boundaries)
-    .where(
-      and(
-        eq(boundaries.countryIso3, iso3),
-        eq(boundaries.level, level),
-        eq(boundaries.source, "GADM")
-      )
-    );
+  let existingGadm: (typeof boundaries.$inferSelect)[] = [];
+  try {
+    existingGadm = await db
+      .select()
+      .from(boundaries)
+      .where(
+        and(
+          eq(boundaries.countryIso3, iso3),
+          eq(boundaries.level, level),
+          eq(boundaries.source, "GADM")
+        )
+      );
+  } catch (err) {
+    console.warn(`[geoBoundaries] DB query failed for ${iso3} L${level}:`, err);
+  }
 
-  if (existingGadm.length > 0) {
+  if (existingGadm && existingGadm.length > 0) {
     const mapped = existingGadm.map(toBoundaryRow);
     mapped.forEach((r: BoundaryRow) => singleBoundaryCache.set(r.id, r));
     levelCache.set(cacheKey, { time: Date.now(), rows: mapped });
@@ -301,12 +306,17 @@ async function ensureLevelCached(iso3: string, level: number): Promise<BoundaryR
   // 3. Fallback to geoBoundaries if GADM is unavailable
   if (!fc || !fc.features?.length) {
     // Check if geoBoundaries exists in DB
-    const existingGb = await db
-      .select()
-      .from(boundaries)
-      .where(and(eq(boundaries.countryIso3, iso3), eq(boundaries.level, level)));
+    let existingGb: (typeof boundaries.$inferSelect)[] = [];
+    try {
+      existingGb = await db
+        .select()
+        .from(boundaries)
+        .where(and(eq(boundaries.countryIso3, iso3), eq(boundaries.level, level)));
+    } catch (err) {
+      console.warn(`[geoBoundaries] DB fallback query failed for ${iso3} L${level}:`, err);
+    }
 
-    if (existingGb.length > 0) {
+    if (existingGb && existingGb.length > 0) {
       const mapped = existingGb.map(toBoundaryRow);
       mapped.forEach((r: BoundaryRow) => singleBoundaryCache.set(r.id, r));
       levelCache.set(cacheKey, { time: Date.now(), rows: mapped });
@@ -371,10 +381,14 @@ async function ensureLevelCached(iso3: string, level: number): Promise<BoundaryR
   });
 
   // Insert in chunks; ignore conflicts if another request raced us.
-  const chunkSize = 500;
-  for (let i = 0; i < rows.length; i += chunkSize) {
-    const chunk = rows.slice(i, i + chunkSize);
-    await db.insert(boundaries).values(chunk).onConflictDoNothing();
+  try {
+    const chunkSize = 100;
+    for (let i = 0; i < rows.length; i += chunkSize) {
+      const chunk = rows.slice(i, i + chunkSize);
+      await db.insert(boundaries).values(chunk).onConflictDoNothing();
+    }
+  } catch (insertErr) {
+    console.warn("[geoBoundaries] DB insert failed (using memory cache):", insertErr);
   }
 
   const mapped: BoundaryRow[] = rows.map((r) => ({
@@ -432,18 +446,23 @@ export async function getChildBoundaries(
   }
 
   // 2. Fast Path: Check if children are ALREADY assigned to parent in database
-  const directChildren = await db
-    .select()
-    .from(boundaries)
-    .where(
-      and(
-        eq(boundaries.countryIso3, iso3),
-        eq(boundaries.level, level),
-        eq(boundaries.parentId, parent.id)
-      )
-    );
+  let directChildren: (typeof boundaries.$inferSelect)[] = [];
+  try {
+    directChildren = await db
+      .select()
+      .from(boundaries)
+      .where(
+        and(
+          eq(boundaries.countryIso3, iso3),
+          eq(boundaries.level, level),
+          eq(boundaries.parentId, parent.id)
+        )
+      );
+  } catch (err) {
+    console.warn(`[geoBoundaries] directChildren query failed for ${iso3} L${level}:`, err);
+  }
 
-  if (directChildren.length > 0) {
+  if (directChildren && directChildren.length > 0) {
     const rows = directChildren.map(toBoundaryRow).sort((a: BoundaryRow, b: BoundaryRow) => a.name.localeCompare(b.name));
     rows.forEach((r: BoundaryRow) => singleBoundaryCache.set(r.id, r));
     levelCache.set(cacheKey, { time: Date.now(), rows });
@@ -466,10 +485,14 @@ export async function getChildBoundaries(
     if (matchedByGid.length > 0) {
       matchedChildren = matchedByGid.map((c) => ({ ...c, parentId: parent.id }));
       const matchedIds = matchedByGid.map((c) => c.id);
-      await db
-        .update(boundaries)
-        .set({ parentId: parent.id })
-        .where(inArray(boundaries.id, matchedIds));
+      try {
+        await db
+          .update(boundaries)
+          .set({ parentId: parent.id })
+          .where(inArray(boundaries.id, matchedIds));
+      } catch (upErr) {
+        console.warn("[geoBoundaries] GID link update failed:", upErr);
+      }
     }
   }
 
@@ -510,10 +533,14 @@ export async function getChildBoundaries(
 
     // Batch update parentId in ONE single query
     if (matchedIds.length > 0) {
-      await db
-        .update(boundaries)
-        .set({ parentId: parent.id })
-        .where(inArray(boundaries.id, matchedIds));
+      try {
+        await db
+          .update(boundaries)
+          .set({ parentId: parent.id })
+          .where(inArray(boundaries.id, matchedIds));
+      } catch (upErr) {
+        console.warn("[geoBoundaries] PIP link update failed:", upErr);
+      }
     }
   }
 
@@ -527,11 +554,16 @@ export async function getBoundaryById(id: string): Promise<BoundaryRow | null> {
   if (singleBoundaryCache.has(id)) {
     return singleBoundaryCache.get(id)!;
   }
-  const rows = await db.select().from(boundaries).where(eq(boundaries.id, id)).limit(1);
-  if (!rows[0]) return null;
-  const row = toBoundaryRow(rows[0]);
-  singleBoundaryCache.set(id, row);
-  return row;
+  try {
+    const rows = await db.select().from(boundaries).where(eq(boundaries.id, id)).limit(1);
+    if (!rows[0]) return null;
+    const row = toBoundaryRow(rows[0]);
+    singleBoundaryCache.set(id, row);
+    return row;
+  } catch (err) {
+    console.warn(`[geoBoundaries] getBoundaryById failed for id ${id}:`, err);
+    return null;
+  }
 }
 
 /** Search cached boundary names for a country (fast indexed ILIKE query). */
