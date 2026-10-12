@@ -132,13 +132,22 @@ export default function LayersPage() {
     queryFn: async () => (await fetch("/api/gee/status")).json(),
   });
 
-  const { data, isLoading } = useQuery<ProjectResponse>({
+  const { data, isLoading, isError, error: queryError, refetch } = useQuery<ProjectResponse>({
     queryKey: ["project", projectId],
     queryFn: async () => {
+      if (!projectId || projectId === "undefined") {
+        throw new Error("Invalid project ID");
+      }
       const res = await fetch(`/api/projects/${projectId}`);
-      if (!res.ok) throw new Error("Project not found");
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => null);
+        throw new Error(errJson?.error || "Project not found or could not be loaded");
+      }
       return res.json();
     },
+    enabled: Boolean(projectId && projectId !== "undefined"),
+    retry: 2,
+    retryDelay: (attempt) => Math.min(attempt * 1000, 3000),
   });
 
   useEffect(() => {
@@ -233,6 +242,35 @@ export default function LayersPage() {
     } finally {
       setStarting(false);
     }
+  }
+
+  if (isError || (!isLoading && !data)) {
+    return (
+      <main className="mx-auto flex min-h-[60vh] max-w-xl flex-col items-center justify-center px-4 text-center">
+        <div className="rounded-2xl border border-rose-200 bg-rose-50/60 p-6 dark:border-rose-900/60 dark:bg-rose-950/20">
+          <p className="text-base font-semibold text-rose-700 dark:text-rose-300">
+            {queryError?.message || "Could not load project"}
+          </p>
+          <p className="mt-1 text-xs text-rose-600/80 dark:text-rose-400">
+            The project could not be found or connection timed out.
+          </p>
+          <div className="mt-4 flex items-center justify-center gap-3">
+            <button
+              onClick={() => refetch()}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3.5 py-2 text-xs font-semibold text-white shadow-sm hover:bg-emerald-500"
+            >
+              <RotateCcw size={13} /> Retry Loading
+            </button>
+            <button
+              onClick={() => router.push("/studio")}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+            >
+              <ArrowLeft size={13} /> Back to Studio
+            </button>
+          </div>
+        </div>
+      </main>
+    );
   }
 
   if (isLoading || !data) {

@@ -275,26 +275,28 @@ async function ensureLevelCached(iso3: string, level: number): Promise<BoundaryR
     return mem.rows;
   }
 
-  // 1. Check if GADM rows already exist in DB
-  let existingGadm: (typeof boundaries.$inferSelect)[] = [];
+  // 1. Check if rows already exist in DB (regardless of source)
+  let existing: (typeof boundaries.$inferSelect)[] = [];
   try {
-    existingGadm = await db
+    existing = await db
       .select()
       .from(boundaries)
       .where(
         and(
           eq(boundaries.countryIso3, iso3),
-          eq(boundaries.level, level),
-          eq(boundaries.source, "GADM")
+          eq(boundaries.level, level)
         )
       );
   } catch (err) {
     console.warn(`[geoBoundaries] DB query failed for ${iso3} L${level}:`, err);
   }
 
-  if (existingGadm && existingGadm.length > 0) {
-    const mapped = existingGadm.map(toBoundaryRow);
-    mapped.forEach((r: BoundaryRow) => singleBoundaryCache.set(r.id, r));
+  if (existing && existing.length > 0) {
+    const mapped = existing.map(toBoundaryRow);
+    mapped.forEach((r: BoundaryRow) => {
+      singleBoundaryCache.set(r.id, r);
+      if (r.externalId) singleBoundaryCache.set(r.externalId, r);
+    });
     levelCache.set(cacheKey, { time: Date.now(), rows: mapped });
     return mapped;
   }
@@ -305,24 +307,6 @@ async function ensureLevelCached(iso3: string, level: number): Promise<BoundaryR
 
   // 3. Fallback to geoBoundaries if GADM is unavailable
   if (!fc || !fc.features?.length) {
-    // Check if geoBoundaries exists in DB
-    let existingGb: (typeof boundaries.$inferSelect)[] = [];
-    try {
-      existingGb = await db
-        .select()
-        .from(boundaries)
-        .where(and(eq(boundaries.countryIso3, iso3), eq(boundaries.level, level)));
-    } catch (err) {
-      console.warn(`[geoBoundaries] DB fallback query failed for ${iso3} L${level}:`, err);
-    }
-
-    if (existingGb && existingGb.length > 0) {
-      const mapped = existingGb.map(toBoundaryRow);
-      mapped.forEach((r: BoundaryRow) => singleBoundaryCache.set(r.id, r));
-      levelCache.set(cacheKey, { time: Date.now(), rows: mapped });
-      return mapped;
-    }
-
     fc = await getRawFeatureCollection(iso3, level);
     usedSource = "geoBoundaries";
   }
@@ -387,6 +371,22 @@ async function ensureLevelCached(iso3: string, level: number): Promise<BoundaryR
       const chunk = rows.slice(i, i + chunkSize);
       await db.insert(boundaries).values(chunk).onConflictDoNothing();
     }
+
+    // Always query back the actual persisted rows so we use real DB IDs matching on-disk records
+    const dbRows = await db
+      .select()
+      .from(boundaries)
+      .where(and(eq(boundaries.countryIso3, iso3), eq(boundaries.level, level)));
+
+    if (dbRows && dbRows.length > 0) {
+      const mapped = dbRows.map(toBoundaryRow);
+      mapped.forEach((r: BoundaryRow) => {
+        singleBoundaryCache.set(r.id, r);
+        if (r.externalId) singleBoundaryCache.set(r.externalId, r);
+      });
+      levelCache.set(cacheKey, { time: Date.now(), rows: mapped });
+      return mapped;
+    }
   } catch (insertErr) {
     console.warn("[geoBoundaries] DB insert failed (using memory cache):", insertErr);
   }
@@ -406,7 +406,10 @@ async function ensureLevelCached(iso3: string, level: number): Promise<BoundaryR
     source: r.source,
   }));
 
-  mapped.forEach((r: BoundaryRow) => singleBoundaryCache.set(r.id, r));
+  mapped.forEach((r: BoundaryRow) => {
+    singleBoundaryCache.set(r.id, r);
+    if (r.externalId) singleBoundaryCache.set(r.externalId, r);
+  });
   levelCache.set(cacheKey, { time: Date.now(), rows: mapped });
   return mapped;
 }
@@ -550,20 +553,77 @@ export async function getChildBoundaries(
   return sorted;
 }
 
-export async function getBoundaryById(id: string): Promise<BoundaryRow | null> {
-  if (singleBoundaryCache.has(id)) {
-    return singleBoundaryCache.get(id)!;
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export async function getBoundaryById(id: string, countryIso3?: string): Promise<BoundaryRow | null> {
+  if (!id) return null;
+  const cleanId = id.trim();
+  if (singleBoundaryCache.has(cleanId)) {
+    return singleBoundaryCache.get(cleanId)!;
   }
+
+  // 1. Check in levelCache memory entries
+  for (const entry of levelCache.values()) {
+    const found = entry.rows.find((r) => r.id === cleanId || r.externalId === cleanId || (countryIso3 && r.countryIso3 === countryIso3 && r.name.toLowerCase() === cleanId.toLowerCase()));
+    if (found) {
+      singleBoundaryCache.set(cleanId, found);
+      singleBoundaryCache.set(found.id, found);
+      if (found.externalId) singleBoundaryCache.set(found.externalId, found);
+      return found;
+    }
+  }
+
+  // 2. Query by UUID if valid UUID syntax
+  if (UUID_REGEX.test(cleanId)) {
+    try {
+      const rows = await db.select().from(boundaries).where(eq(boundaries.id, cleanId)).limit(1);
+      if (rows[0]) {
+        const row = toBoundaryRow(rows[0]);
+        singleBoundaryCache.set(cleanId, row);
+        singleBoundaryCache.set(row.id, row);
+        if (row.externalId) singleBoundaryCache.set(row.externalId, row);
+        return row;
+      }
+    } catch (err) {
+      console.warn(`[geoBoundaries] getBoundaryById UUID query failed for id ${cleanId}:`, err);
+    }
+  }
+
+  // 3. Query by externalId in DB
   try {
-    const rows = await db.select().from(boundaries).where(eq(boundaries.id, id)).limit(1);
-    if (!rows[0]) return null;
-    const row = toBoundaryRow(rows[0]);
-    singleBoundaryCache.set(id, row);
-    return row;
+    const cond = countryIso3
+      ? and(eq(boundaries.countryIso3, countryIso3), eq(boundaries.externalId, cleanId))
+      : eq(boundaries.externalId, cleanId);
+    const rows = await db.select().from(boundaries).where(cond).limit(1);
+    if (rows[0]) {
+      const row = toBoundaryRow(rows[0]);
+      singleBoundaryCache.set(cleanId, row);
+      singleBoundaryCache.set(row.id, row);
+      if (row.externalId) singleBoundaryCache.set(row.externalId, row);
+      return row;
+    }
   } catch (err) {
-    console.warn(`[geoBoundaries] getBoundaryById failed for id ${id}:`, err);
-    return null;
+    console.warn(`[geoBoundaries] getBoundaryById externalId query failed for id ${cleanId}:`, err);
   }
+
+  // 4. Query by name in DB
+  try {
+    const cond = countryIso3
+      ? and(eq(boundaries.countryIso3, countryIso3), eq(boundaries.name, cleanId))
+      : eq(boundaries.name, cleanId);
+    const rows = await db.select().from(boundaries).where(cond).limit(1);
+    if (rows[0]) {
+      const row = toBoundaryRow(rows[0]);
+      singleBoundaryCache.set(cleanId, row);
+      singleBoundaryCache.set(row.id, row);
+      if (row.externalId) singleBoundaryCache.set(row.externalId, row);
+      return row;
+    }
+  } catch (err) {
+    console.warn(`[geoBoundaries] getBoundaryById name query failed for ${cleanId}:`, err);
+  }
+
+  return null;
 }
 
 /** Search cached boundary names for a country (fast indexed ILIKE query). */

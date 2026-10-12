@@ -43,8 +43,11 @@ export async function POST(req: NextRequest) {
       isCustomGeometry,
     } = body;
 
-    if (!countryIso3 || !geometry || !bbox || level === undefined || !boundaryName) {
-      return Response.json({ error: "Missing required study-area fields." }, { status: 400 });
+    const effectiveBoundaryName = (boundaryName || name || countryName || "Study Area").toString().trim();
+    const effectiveProjectName = (name || effectiveBoundaryName || `${countryName || countryIso3} Study Area`).toString().trim();
+
+    if (!countryIso3 || !geometry || !bbox || level === undefined) {
+      return Response.json({ error: "Missing required study-area fields (country, geometry, or bbox)." }, { status: 400 });
     }
 
     const session = await getSession();
@@ -58,23 +61,32 @@ export async function POST(req: NextRequest) {
     const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
     const safeBoundaryId = typeof boundaryId === "string" && UUID_REGEX.test(boundaryId) ? boundaryId : null;
 
+    let parsedArea = 0;
+    if (typeof areaKm2 === "number" && !isNaN(areaKm2)) {
+      parsedArea = areaKm2;
+    } else if (typeof areaKm2 === "string") {
+      const cleaned = parseFloat(areaKm2.replace(/,/g, ""));
+      if (!isNaN(cleaned)) parsedArea = cleaned;
+    }
+    const safeAreaKm2Str = Math.max(0, parsedArea).toFixed(3);
+
     const [project] = await db
       .insert(projects)
       .values({
         userId: session?.userId ?? null,
         ownerToken,
         shareToken: crypto.randomUUID(),
-        name: name?.trim() || `${boundaryName} Study Area`,
+        name: effectiveProjectName,
         countryIso3,
         countryName: countryName || countryIso3,
         level,
         levelName: levelName || "Country",
         boundaryId: safeBoundaryId,
-        boundaryName,
-        pathLabels: pathLabels || [],
+        boundaryName: effectiveBoundaryName,
+        pathLabels: Array.isArray(pathLabels) && pathLabels.length > 0 ? pathLabels : [{ level, levelName: levelName || "Country", name: effectiveBoundaryName }],
         geometry,
         bbox,
-        areaKm2: Number(areaKm2 || 0).toFixed(3),
+        areaKm2: safeAreaKm2Str,
         isCustomGeometry: Boolean(isCustomGeometry),
         selectedLayers: Array.isArray(body.selectedLayers) ? body.selectedLayers : [],
         resolution: typeof body.resolution === "number" ? body.resolution : 100,

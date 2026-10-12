@@ -25,10 +25,10 @@ export async function GET(req: NextRequest) {
 
     const level = Number(levelParam);
     let parent = null;
-    if (parentId) {
-      parent = await getBoundaryById(parentId);
+    if (parentId && parentId !== "none" && parentId !== "null" && parentId !== "undefined") {
+      parent = await getBoundaryById(parentId, country);
       if (!parent) {
-        return Response.json({ error: "Parent boundary not found" }, { status: 404 });
+        console.warn(`[boundaries API] Parent boundary not found for parentId=${parentId}, level=${level}, country=${country}. Falling back to level boundaries.`);
       }
     }
 

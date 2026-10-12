@@ -51,7 +51,7 @@ function useBoundaryLevel(country: string, level: number, parentId: string | nul
       return res.json();
     },
     enabled,
-    staleTime: Infinity,
+    staleTime: 5 * 60_000,
     gcTime: 24 * 60 * 60_000,
     retry: 2,
     retryDelay: (attempt) => Math.min(attempt * 1000, 3000),
@@ -357,34 +357,45 @@ export default function StudioPage() {
     }
     setCreating(true);
     try {
+      const safeProjectName = (projectName || displayName || "My Study Area").trim();
+      const safeBoundaryName = (displayName || safeProjectName || "Study Area").trim();
+
+      let safeAreaKm2 = 0;
+      if (typeof areaKm2 === "number" && !isNaN(areaKm2)) {
+        safeAreaKm2 = areaKm2;
+      } else if (areaKm2) {
+        const parsed = parseFloat(String(areaKm2).replace(/,/g, ""));
+        if (!isNaN(parsed)) safeAreaKm2 = parsed;
+      }
+
       const payload =
         mode === "upload" || mode === "search"
           ? {
-              name: projectName || customBoundary!.name,
+              name: safeProjectName,
               countryIso3: countryIso3 || "XXX",
               countryName: country?.name || "Global Location",
               level: 99,
               levelName: mode === "search" ? "Geocoded Area" : "Custom Boundary",
               boundaryId: null,
-              boundaryName: customBoundary!.name,
-              pathLabels: [{ level: 99, levelName: mode === "search" ? "Geocoded Area" : "Custom Boundary", name: customBoundary!.name }],
+              boundaryName: safeBoundaryName,
+              pathLabels: [{ level: 99, levelName: mode === "search" ? "Geocoded Area" : "Custom Boundary", name: safeBoundaryName }],
               geometry: customBoundary!.geometry,
               bbox: customBoundary!.bbox,
-              areaKm2: customBoundary!.areaKm2,
+              areaKm2: safeAreaKm2,
               isCustomGeometry: true,
             }
           : {
-              name: projectName || displayName,
+              name: safeProjectName,
               countryIso3,
-              countryName: country?.name,
+              countryName: country?.name || countryIso3,
               level: currentBoundary ? currentBoundary.level : 0,
-              levelName: displayLevelName,
-              boundaryId: currentBoundary ? currentBoundary.id : country0.data?.boundary?.id,
-              boundaryName: displayName,
-              pathLabels,
+              levelName: displayLevelName || "Country",
+              boundaryId: currentBoundary ? currentBoundary.id : country0.data?.boundary?.id ?? null,
+              boundaryName: safeBoundaryName,
+              pathLabels: pathLabels.length > 0 ? pathLabels : [{ level: 0, levelName: "Country", name: safeBoundaryName }],
               geometry: activeGeometry,
               bbox: activeBbox,
-              areaKm2: areaKm2 ?? 0,
+              areaKm2: safeAreaKm2,
               isCustomGeometry: false,
             };
 
@@ -612,7 +623,8 @@ export default function StudioPage() {
                 const parent = idx === 0 ? true : Boolean(selectedPath[idx - 1]);
                 const isNoSubdivisions = Boolean(parent && !q?.isLoading && q?.data && (!q?.data.items || q?.data.items.length === 0));
                 const hasError = Boolean(parent && q?.isError);
-                const disabled = level > maxLevel || !parent || isNoSubdivisions || hasError;
+                const hasItems = Boolean(q?.data?.items && q?.data.items.length > 0);
+                const disabled = level > maxLevel || !parent || isNoSubdivisions || (hasError && !hasItems);
                 const placeholder = disabled
                   ? !parent
                     ? `Select ${prevLabel} first`

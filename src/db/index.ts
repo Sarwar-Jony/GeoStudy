@@ -92,16 +92,20 @@ let poolExport: Pool | undefined;
 
 if (databaseUrl && (databaseUrl.startsWith("postgres://") || databaseUrl.startsWith("postgresql://"))) {
   if (!globalForDb.__arenaNextJsPostgresqlPool) {
-    globalForDb.__arenaNextJsPostgresqlPool = new Pool({
+    const p = new Pool({
       connectionString: databaseUrl,
       ssl:
         databaseUrl.includes("sslmode=require") || process.env.NODE_ENV === "production"
           ? { rejectUnauthorized: false }
           : undefined,
-      max: 10,
-      idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 10000,
+      max: 20,
+      idleTimeoutMillis: 60000,
+      connectionTimeoutMillis: 30000,
     });
+    p.on("error", (err) => {
+      console.warn("[DB Pool] Unexpected error on idle client:", err);
+    });
+    globalForDb.__arenaNextJsPostgresqlPool = p;
   }
   poolExport = globalForDb.__arenaNextJsPostgresqlPool;
   dbExport = drizzleNodePg(poolExport, { schema });
