@@ -44,13 +44,60 @@ body {
 .leaflet-container {
   background: #e2e8f0;
   font-family: inherit;
+  touch-action: pan-x pan-y;
 }
 .dark .leaflet-container {
   background: #0d1527;
 }
 
+/* Mobile & Touch Optimizations */
+html {
+  -webkit-tap-highlight-color: transparent;
+  scroll-behavior: smooth;
+}
+
+body {
+  padding-top: env(safe-area-inset-top, 0);
+  padding-bottom: env(safe-area-inset-bottom, 0);
+  padding-left: env(safe-area-inset-left, 0);
+  padding-right: env(safe-area-inset-right, 0);
+}
+
+/* Prevent unwanted zooming on iOS Safari when tapping inputs */
+@media screen and (max-width: 768px) {
+  input[type="text"],
+  input[type="number"],
+  input[type="email"],
+  input[type="password"],
+  input[type="search"],
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}
+
+/* Ensure buttons and controls have smooth touch manipulation */
+button, a, input, select {
+  touch-action: manipulation;
+}
+
+/* Leaflet touch controls modern styling on mobile */
+.leaflet-touch .leaflet-bar {
+  border: none !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15) !important;
+  border-radius: 0.75rem !important;
+  overflow: hidden;
+}
+
+.leaflet-touch .leaflet-bar a {
+  width: 36px !important;
+  height: 36px !important;
+  line-height: 36px !important;
+}
+
 .swipe-divider {
   cursor: ew-resize;
+  touch-action: pan-y;
 }
 
 @keyframes pulse-soft {
@@ -65,3 +112,4 @@ body {
 .animate-pulse-soft {
   animation: pulse-soft 1.8s ease-in-out infinite;
 }
+

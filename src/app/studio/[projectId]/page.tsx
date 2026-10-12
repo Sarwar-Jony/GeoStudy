@@ -325,7 +325,7 @@ export default function ProjectViewerPage({ params }: { params: Promise<{ projec
       </div>
 
       {/* Advanced Geospatial GIS Ribbon (Desktop & Tablet) */}
-      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-3.5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+      <div className="mt-4 hidden sm:flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-3.5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-xs font-bold uppercase tracking-wider text-slate-400 pl-1">
             GIS Toolkit:
@@ -378,7 +378,7 @@ export default function ProjectViewerPage({ params }: { params: Promise<{ projec
       <div className="mt-4 flex items-center rounded-xl bg-slate-200/70 p-1 dark:bg-slate-800/80 lg:hidden">
         <button
           onClick={() => setActiveMobileTab("map")}
-          className={`flex-1 rounded-lg py-2 text-xs font-bold transition ${
+          className={`flex min-h-[44px] flex-1 items-center justify-center rounded-lg py-2 text-xs font-bold transition ${
             activeMobileTab === "map"
               ? "bg-white text-emerald-700 shadow dark:bg-slate-900 dark:text-emerald-400"
               : "text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white"
@@ -388,7 +388,7 @@ export default function ProjectViewerPage({ params }: { params: Promise<{ projec
         </button>
         <button
           onClick={() => setActiveMobileTab("layers")}
-          className={`flex-1 rounded-lg py-2 text-xs font-bold transition ${
+          className={`flex min-h-[44px] flex-1 items-center justify-center rounded-lg py-2 text-xs font-bold transition ${
             activeMobileTab === "layers"
               ? "bg-white text-emerald-700 shadow dark:bg-slate-900 dark:text-emerald-400"
               : "text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white"
@@ -398,7 +398,7 @@ export default function ProjectViewerPage({ params }: { params: Promise<{ projec
         </button>
         <button
           onClick={() => setActiveMobileTab("tools")}
-          className={`flex-1 rounded-lg py-2 text-xs font-bold transition ${
+          className={`flex min-h-[44px] flex-1 items-center justify-center rounded-lg py-2 text-xs font-bold transition ${
             activeMobileTab === "tools"
               ? "bg-white text-emerald-700 shadow dark:bg-slate-900 dark:text-emerald-400"
               : "text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white"
@@ -504,7 +504,7 @@ export default function ProjectViewerPage({ params }: { params: Promise<{ projec
               geometry={project.geometry}
               bbox={project.bbox}
               overlays={mapOverlays}
-              className="h-[460px] w-full"
+              className="h-[360px] sm:h-[480px] w-full"
               defaultBasemap="satellite"
               onMapClick={(info) => setInspectedCoord(info)}
             />

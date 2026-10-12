@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Map, Moon, Sun, LayoutGrid, Menu, X, LogOut, User } from "lucide-react";
+import { Map, Moon, Sun, LayoutGrid, Menu, X, LogOut, User, Smartphone, Download } from "lucide-react";
 import { useUIStore } from "@/store/uiStore";
 import { GeoStudyBrand } from "@/components/common/GeoStudyLogo";
 
@@ -30,11 +30,51 @@ export default function Navbar() {
   const qc = useQueryClient();
   const { theme, toggleTheme, setTheme } = useUIStore();
   const [open, setOpen] = useState(false);
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+  const [isInstalled, setIsInstalled] = useState(false);
 
   useEffect(() => {
     const stored = typeof window !== "undefined" ? localStorage.getItem("gsa-theme") : null;
     if (stored === "dark" || stored === "light") setTheme(stored);
+
+    // Check if running in standalone mode (already installed PWA)
+    if (typeof window !== "undefined") {
+      const isStandalone =
+        window.matchMedia("(display-mode: standalone)").matches ||
+        (window.navigator as any).standalone === true;
+      setIsInstalled(Boolean(isStandalone));
+
+      const handleBeforeInstallPrompt = (e: Event) => {
+        e.preventDefault();
+        setDeferredPrompt(e);
+      };
+
+      window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+      window.addEventListener("appinstalled", () => {
+        setIsInstalled(true);
+        setDeferredPrompt(null);
+      });
+
+      return () => {
+        window.removeEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+      };
+    }
   }, [setTheme]);
+
+  const handleInstallClick = async () => {
+    if (deferredPrompt) {
+      deferredPrompt.prompt();
+      const choiceResult = await deferredPrompt.userChoice;
+      if (choiceResult.outcome === "accepted") {
+        setIsInstalled(true);
+      }
+      setDeferredPrompt(null);
+    } else {
+      alert(
+        "To install GeoStudy on mobile:\n\n• On iOS (Safari): Tap the Share button, then select 'Add to Home Screen'.\n• On Android (Chrome): Tap the menu (3 dots) and select 'Install app' or 'Add to Home Screen'."
+      );
+    }
+  };
 
   const { data } = useQuery<Me>({
     queryKey: ["me"],
@@ -53,8 +93,8 @@ export default function Navbar() {
   ];
 
   return (
-    <header className="sticky top-0 z-50 border-b border-slate-200/80 bg-white/80 backdrop-blur-md dark:border-slate-800/80 dark:bg-[#060913]/85">
-      <nav className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3 sm:px-6">
+    <header className="sticky top-0 z-50 border-b border-slate-200/80 bg-white/85 backdrop-blur-md dark:border-slate-800/80 dark:bg-[#060913]/90">
+      <nav className="mx-auto flex max-w-7xl items-center justify-between px-4 py-2.5 sm:px-6">
         <Link href="/" className="transition hover:opacity-95">
           <GeoStudyBrand />
         </Link>
@@ -76,6 +116,17 @@ export default function Navbar() {
         </div>
 
         <div className="hidden items-center gap-2 md:flex">
+          {!isInstalled && (
+            <button
+              onClick={handleInstallClick}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-700 transition hover:bg-emerald-100 dark:border-emerald-500/40 dark:bg-emerald-950/40 dark:text-emerald-300 dark:hover:bg-emerald-900/50"
+              title="Install App on Device"
+            >
+              <Smartphone size={13} className="text-emerald-600 dark:text-emerald-400" />
+              <span>Install App</span>
+            </button>
+          )}
+
           <a
             href="https://github.com/Sarwar-Jony/GeoStudy"
             target="_blank"
@@ -117,32 +168,95 @@ export default function Navbar() {
           )}
         </div>
 
-        <button className="md:hidden" onClick={() => setOpen((v) => !v)} aria-label="Menu">
-          {open ? <X /> : <Menu />}
-        </button>
+        {/* Mobile Header Right Icons: Install App + Hamburger */}
+        <div className="flex items-center gap-1.5 md:hidden">
+          {!isInstalled && (
+            <button
+              onClick={handleInstallClick}
+              className="flex items-center gap-1 rounded-lg border border-emerald-500/40 bg-emerald-50/80 px-2.5 py-1.5 text-xs font-bold text-emerald-800 transition active:scale-95 dark:border-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300"
+              aria-label="Install GeoStudy"
+            >
+              <Download size={13} className="text-emerald-600 dark:text-emerald-400" />
+              <span>Install</span>
+            </button>
+          )}
+
+          <button
+            className="grid h-10 w-10 place-items-center rounded-xl border border-slate-200/90 text-slate-700 transition active:bg-slate-100 dark:border-slate-800 dark:text-slate-200 dark:active:bg-slate-800"
+            onClick={() => setOpen((v) => !v)}
+            aria-label="Menu"
+          >
+            {open ? <X size={20} /> : <Menu size={20} />}
+          </button>
+        </div>
       </nav>
 
+      {/* Mobile Drawer */}
       {open && (
-        <div className="border-t border-slate-200 bg-white px-4 py-3 md:hidden dark:border-slate-800 dark:bg-slate-950">
-          <div className="flex flex-col gap-1">
+        <div className="border-t border-slate-200 bg-white/95 px-4 py-4 backdrop-blur-lg md:hidden dark:border-slate-800 dark:bg-[#060913]/95">
+          <div className="flex flex-col gap-2">
+            {!isInstalled && (
+              <button
+                onClick={() => {
+                  setOpen(false);
+                  handleInstallClick();
+                }}
+                className="flex min-h-[44px] items-center gap-3 rounded-xl border border-emerald-500/40 bg-gradient-to-r from-emerald-50 to-teal-50 px-3.5 py-2.5 text-left text-sm font-bold text-emerald-800 dark:from-emerald-950/50 dark:to-teal-950/30 dark:text-emerald-200"
+              >
+                <Smartphone size={18} className="text-emerald-600 dark:text-emerald-400" />
+                <div className="flex-1">
+                  <div>Install App on Home Screen</div>
+                  <div className="text-[11px] font-normal text-emerald-600/80 dark:text-emerald-400/70">
+                    Works smoothly like a native mobile app
+                  </div>
+                </div>
+              </button>
+            )}
+
             {links.map((l) => (
-              <Link key={l.href} href={l.href} className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800" onClick={() => setOpen(false)}>
-                <LayoutGrid size={15} /> {l.label}
+              <Link
+                key={l.href}
+                href={l.href}
+                className={`flex min-h-[44px] items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm font-semibold transition ${
+                  pathname?.startsWith(l.href)
+                    ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400"
+                    : "text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
+                }`}
+                onClick={() => setOpen(false)}
+              >
+                <LayoutGrid size={16} /> {l.label}
               </Link>
             ))}
-            <button onClick={toggleTheme} className="flex items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-medium text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800">
-              {theme === "dark" ? <Sun size={15} /> : <Moon size={15} />} Toggle theme
+
+            <button
+              onClick={toggleTheme}
+              className="flex min-h-[44px] items-center gap-3 rounded-xl px-3.5 py-2.5 text-left text-sm font-semibold text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
+            >
+              {theme === "dark" ? <Sun size={16} className="text-amber-500" /> : <Moon size={16} className="text-slate-500" />}
+              <span>{theme === "dark" ? "Light Mode" : "Dark Mode"}</span>
             </button>
+
             {data?.user ? (
-              <button onClick={logout} className="flex items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-medium text-red-600 hover:bg-red-50 dark:hover:bg-red-500/10">
-                <LogOut size={15} /> Log out ({data.user.name})
+              <button
+                onClick={logout}
+                className="flex min-h-[44px] items-center gap-3 rounded-xl px-3.5 py-2.5 text-left text-sm font-semibold text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30"
+              >
+                <LogOut size={16} /> Log out ({data.user.name})
               </button>
             ) : (
-              <div className="mt-1 flex gap-2">
-                <Link href="/login" className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-center text-sm font-medium dark:border-slate-700">
+              <div className="mt-2 flex gap-2">
+                <Link
+                  href="/login"
+                  onClick={() => setOpen(false)}
+                  className="flex min-h-[44px] flex-1 items-center justify-center rounded-xl border border-slate-200 px-3 py-2 text-center text-sm font-semibold text-slate-800 dark:border-slate-700 dark:text-slate-200"
+                >
                   Log in
                 </Link>
-                <Link href="/register" className="flex-1 rounded-lg bg-slate-900 px-3 py-2 text-center text-sm font-medium text-white dark:bg-emerald-600">
+                <Link
+                  href="/register"
+                  onClick={() => setOpen(false)}
+                  className="flex min-h-[44px] flex-1 items-center justify-center rounded-xl bg-emerald-600 px-3 py-2 text-center text-sm font-semibold text-white shadow-sm hover:bg-emerald-500"
+                >
                   Sign up
                 </Link>
               </div>

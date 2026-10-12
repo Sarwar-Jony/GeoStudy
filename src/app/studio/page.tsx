@@ -431,36 +431,36 @@ export default function StudioPage() {
         </p>
       </div>
 
-      <div className="mb-5 flex flex-wrap gap-2">
+      <div className="mb-5 grid grid-cols-1 sm:grid-cols-3 gap-2">
         <button
           onClick={() => setMode("search")}
-          className={`flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-sm font-semibold transition ${
+          className={`flex min-h-[44px] items-center justify-center gap-2 rounded-xl px-3 py-2 text-xs sm:text-sm font-semibold transition ${
             mode === "search"
               ? "bg-emerald-600 text-white shadow-sm ring-1 ring-emerald-500"
               : "border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
           }`}
         >
-          <Search size={15} /> Direct Place Search (Geocoding)
+          <Search size={15} /> <span>Place Search</span>
         </button>
         <button
           onClick={() => setMode("hierarchy")}
-          className={`flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-sm font-semibold transition ${
+          className={`flex min-h-[44px] items-center justify-center gap-2 rounded-xl px-3 py-2 text-xs sm:text-sm font-semibold transition ${
             mode === "hierarchy"
               ? "bg-emerald-600 text-white shadow-sm ring-1 ring-emerald-500"
               : "border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
           }`}
         >
-          <MapPinned size={15} /> Hierarchical Selection
+          <MapPinned size={15} /> <span>Hierarchy</span>
         </button>
         <button
           onClick={() => setMode("upload")}
-          className={`flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-sm font-semibold transition ${
+          className={`flex min-h-[44px] items-center justify-center gap-2 rounded-xl px-3 py-2 text-xs sm:text-sm font-semibold transition ${
             mode === "upload"
               ? "bg-emerald-600 text-white shadow-sm ring-1 ring-emerald-500"
               : "border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
           }`}
         >
-          <UploadCloud size={15} /> Upload Custom Boundary
+          <UploadCloud size={15} /> <span>Upload AOI</span>
         </button>
       </div>
 
@@ -858,8 +858,13 @@ export default function StudioPage() {
           </div>
         </div>
 
-        <div className="min-h-[420px] overflow-hidden rounded-2xl border border-slate-200 shadow-sm dark:border-slate-800">
-          <DynamicStudyAreaMap geometry={activeGeometry} parentGeometry={parentGeometry} bbox={activeBbox} className="h-full min-h-[500px] w-full" />
+        <div className="overflow-hidden rounded-2xl border border-slate-200 shadow-sm dark:border-slate-800 min-h-[350px] sm:min-h-[460px] lg:min-h-[520px]">
+          <DynamicStudyAreaMap
+            geometry={activeGeometry}
+            parentGeometry={parentGeometry}
+            bbox={activeBbox}
+            className="h-[350px] sm:h-[460px] lg:h-full lg:min-h-[520px] w-full"
+          />
         </div>
       </div>
     </main>
