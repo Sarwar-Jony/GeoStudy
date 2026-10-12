@@ -607,6 +607,7 @@ export default function StudioPage() {
               {[0, 1, 2, 3].map((idx) => {
                 const level = idx + 1;
                 const label = country?.levelNames[idx] || `Level ${level}`;
+                const prevLabel = idx > 0 ? (country?.levelNames[idx - 1] || `Level ${idx}`) : "above";
                 const q = levelQueries[idx];
                 const parent = idx === 0 ? true : Boolean(selectedPath[idx - 1]);
                 const isNoSubdivisions = Boolean(parent && !q?.isLoading && q?.data && (!q?.data.items || q?.data.items.length === 0));
@@ -614,7 +615,7 @@ export default function StudioPage() {
                 const disabled = level > maxLevel || !parent || isNoSubdivisions || hasError;
                 const placeholder = disabled
                   ? !parent
-                    ? "Select the level above first"
+                    ? `Select ${prevLabel} first`
                     : isNoSubdivisions
                     ? "No further sub-districts (Area fully specified)"
                     : hasError
@@ -628,6 +629,12 @@ export default function StudioPage() {
                       <span>{label}</span>
                       {level > maxLevel ? (
                         <span className="font-normal text-[11px] text-slate-400">(not available)</span>
+                      ) : !parent ? (
+                        <span className="font-normal text-[11px] text-slate-400">Choose {prevLabel} first</span>
+                      ) : q?.isLoading ? (
+                        <span className="font-normal text-[11px] text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                          <Loader2 size={11} className="animate-spin" /> Loading {label.toLowerCase()}s...
+                        </span>
                       ) : isNoSubdivisions ? (
                         <span className="font-normal text-[11px] text-emerald-600 dark:text-emerald-400">✓ Fully specified</span>
                       ) : hasError ? (
